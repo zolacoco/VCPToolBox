@@ -621,37 +621,61 @@ function calculateReversalProbability(card, factors, origin) {
     // --- Origin-specific reversal patterns ---
     switch(origin.type) {
         case 'sun':
-            // Sun reduces reversals during day, increases at night
-            if (factors.hour > 6 && factors.hour < 18) {
-                probability -= 0.10;
+            // 太阳起源：逆位率与太阳高度角相关。
+            // solarElevation > 0 (白天), < 0 (夜晚)
+            if (factors.solarElevation > 0) {
+                // 白天：太阳越高，逆位率越低
+                // 太阳在最高点 (90度) 时，减少量最大
+                let reduction = (factors.solarElevation / 90) * 0.20; // Max reduction of 0.20
+                probability -= reduction;
+                 // 正午时分 (角度 > 45)，额外显著降低
+                if (factors.solarElevation > 45) {
+                    probability -= 0.10;
+                }
             } else {
-                probability += 0.05;
+                // 夜晚：选择太阳，逆位率上升
+                // 太阳在最低点 (-90度) 时，增加量最大
+                let increase = (Math.abs(factors.solarElevation) / 90) * 0.15; // Max increase of 0.15
+                probability += increase;
             }
-            // Clear weather further reduces reversals
+            // 晴朗天气进一步降低逆位率
             if (!factors.isRainOrSnow && factors.cloud < 30) {
                 probability -= 0.05;
             }
             break;
             
         case 'moon':
-            // Moon phases strongly affect reversals
-            const moonPhaseEffect = Math.sin((factors.moonIllumination / 100) * Math.PI);
-            probability += moonPhaseEffect * 0.20; // -0.20 to +0.20 based on phase
-            
-            // Night hours increase reversals
-            if (factors.hour >= 22 || factors.hour <= 4) {
-                probability += 0.10;
+            // 月亮起源：夜晚逆位率下降，白天上升；月相影响巨大
+            // 日夜影响
+            if (factors.solarElevation < 0) { // Night
+                probability -= 0.05; // 夜晚略微下降
+            } else { // Day
+                probability += 0.05; // 白天略微上升
             }
-            
-            // Emotional weather (rain) increases reversals
+
+            // 月相影响: 满月大幅下降，新月小幅下降
+            // moonIllumination: 100 for full, 0 for new
+            const moonPhaseModifier = -0.05 - (factors.moonIllumination / 100) * 0.15; // -0.05 (new) to -0.20 (full)
+            probability += moonPhaseModifier;
+
+            // 情绪化的天气（如下雨）会增加逆位率
             if (factors.isRainOrSnow) {
                 probability += 0.08;
             }
             break;
             
         case 'star':
-            // Star origin creates balanced but complex patterns
-            // Outer planet positions affect reversals
+            // 星辰起源：与晨昏线相关
+            // solarElevation 在 -18 到 0 度之间为晨昏蒙影时段
+            if (factors.solarElevation > -18 && factors.solarElevation < 0) {
+                if (factors.hour > 12) { // 傍晚 (Dusk)
+                    probability -= 0.10; // 星星出现，逆位率下降
+                } else { // 黎明 (Dawn)
+                    probability += 0.10; // 星星隐退，逆位率上升
+                }
+            }
+            
+            // 保留原有的天体不稳定性和节气影响
             let outerPlanetInstability = 0;
             ['uranus', 'neptune', 'saturn'].forEach(planet => {
                 if (factors[planet]) {
@@ -659,8 +683,6 @@ function calculateReversalProbability(card, factors, origin) {
                 }
             });
             probability += outerPlanetInstability * 0.03;
-            
-            // Solar term transitions increase reversals
             if (factors.solarTerm && factors.solarTerm !== '无') {
                 probability += 0.05;
             }
@@ -687,11 +709,6 @@ function calculateReversalProbability(card, factors, origin) {
 
     // --- Environmental Factor Adjustments ---
     probability += factors.hasWarning * 0.12;
-    probability += (100 - factors.moonIllumination) / 100 * 0.10;
-    
-    if (factors.solarElevation < 0) {
-        probability += (Math.abs(factors.solarElevation) / 90) * 0.05;
-    }
     
     probability += factors.isRainOrSnow * 0.05;
     if (factors.humidity > 85) probability += 0.05;
