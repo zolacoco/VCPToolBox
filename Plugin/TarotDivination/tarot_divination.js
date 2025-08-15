@@ -46,7 +46,7 @@ function determineOrigin(inputOrigin, random) {
         return {
             type: 'void',
             name: '虚',
-            description: '起源进入了虚无状态，命运的织线变得混沌而不可预测',
+            description: '起源进入了虚无状态，天体的光踪隐入未知，命运的织线变得混沌而不可预测',
             symbol: '◯'
         };
     }
