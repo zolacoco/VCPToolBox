@@ -42,9 +42,20 @@ async function main() {
                 maxResults = 10; // Default if parsing fails
             }
 
-            const apiKey = process.env.TavilyKey; // Use the correct environment variable name
+            let apiKey = process.env.TavilyKey; // Use the correct environment variable name
             if (!apiKey) {
                 throw new Error("TavilyKey environment variable not set.");
+            }
+
+            // Check if the key is a comma-separated list
+            if (apiKey.includes(',')) {
+                const keys = apiKey.split(',').map(key => key.trim()).filter(key => key);
+                if (keys.length > 0) {
+                    // Select a random key from the array
+                    apiKey = keys[Math.floor(Math.random() * keys.length)];
+                } else {
+                    throw new Error("TavilyKey environment variable is empty or contains only commas.");
+                }
             }
 
             const tvly = tavily({ apiKey });
