@@ -908,14 +908,24 @@ async function handleChatCompletion(req, res, forceShowVCP = false) {
                                 if (jsonData && jsonData !== '[DONE]') {
                                     try {
                                         const parsedData = JSON.parse(jsonData);
+                                        // START: Stream content filtering
+                                        // 1. Filter out Gemini's reasoning_content as per user request
+                                        if (parsedData.choices?.[0]?.delta?.reasoning_content) {
+                                            if (DEBUG_MODE) {
+                                                console.log(`[Stream Filter] Intercepted and discarded reasoning_content chunk.`);
+                                            }
+                                            continue; // Skip this line entirely
+                                        }
+
+                                        // 2. Filter out GPT-5-mini's "Thinking..." messages
                                         const content = parsedData.choices?.[0]?.delta?.content;
-                                        // Core filtering logic
                                         if (isGpt5Mini && content && thinkingRegex.test(content)) {
                                             if (DEBUG_MODE) {
                                                 console.log(`[GPT-5-mini-Compat] Intercepted thinking SSE chunk: ${content}`);
                                             }
                                             continue; // Skip this line
                                         }
+                                        // END: Stream content filtering
                                     } catch (e) {
                                         // Not a JSON we care about, pass through
                                     }
@@ -970,16 +980,12 @@ async function handleChatCompletion(req, res, forceShowVCP = false) {
                         }
 
                         if (!res.writableEnded) {
-                            if (isChunkAnEndOfStreamSignal) {
-                                // If the chunk is or contains an end-of-stream signal (DONE or finish_reason),
-                                // do not forward it directly. The final [DONE] will be sent by the server's main loop.
-                                // Its content will still be collected by the sseBuffer logic below.
-                            } else {
-                                // (原 filterGrokReasoningStream 调用已移除)
-                                // 只有在过滤后仍有内容时才发送，避免发送空的数据块
-                                if (chunkString) {
-                                    res.write(chunkString);
-                                }
+                            // Always forward the chunk to the client. The final content chunk often comes
+                            // with a finish_reason, and it MUST be sent. The server's main loop will
+                            // handle sending its own [DONE] signal after the VCP loop is complete.
+                            // We only stop forwarding if the response has already ended for other reasons.
+                            if (chunkString) {
+                                res.write(chunkString);
                             }
                         }
                         
