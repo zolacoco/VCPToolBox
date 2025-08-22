@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "displayName": "IMAP 邮件本地搜索",
   "description": "一个同步 VCP 插件，用于在 IMAPIndex 插件生成的本地邮件存储中执行全文搜索。它支持分页和可配置的索引目录。",
-  "author": "Kilo Code",
+  "author": "B3000Kcn",
   "pluginType": "synchronous",
   "entryPoint": {
     "type": "nodejs",
