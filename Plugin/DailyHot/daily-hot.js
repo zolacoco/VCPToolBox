@@ -7,7 +7,7 @@ const INTERNAL_TIMEOUT_MS = 30000;
 
 // --- 【新增】指向“V日报日记”的路径常量 ---
 // 我们假定此插件位于 /Plugin/DailyHot/ 目录下，需要跳出两层到项目根目录
-const DIARY_NOTE_PATH = path.join(__dirname, '..', '..', 'dailynote', 'V日报日记');
+const DIARY_NOTE_PATH = path.join(__dirname, '..', '..', 'dailynote', 'V日报');
 
 
 // --- 【新增】核心函数：将新闻写入日报日记文件夹 ---
