@@ -14,6 +14,24 @@ class RAGDiaryPlugin {
     constructor() {
         this.name = 'RAGDiaryPlugin';
         this.vectorDBManager = null;
+        this.ragTags = {};
+        this.loadTags();
+    }
+
+    async loadTags() {
+        try {
+            const tagsPath = path.join(__dirname, 'rag_tags.json');
+            const data = await fs.readFile(tagsPath, 'utf-8');
+            this.ragTags = JSON.parse(data);
+            console.log('[RAGDiaryPlugin] 成功加载 RAG 标签配置文件。');
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                console.log('[RAGDiaryPlugin] 未找到 rag_tags.json 文件，将仅使用日记本名称进行匹配。');
+            } else {
+                console.error('[RAGDiaryPlugin] 加载 rag_tags.json 文件失败:', error);
+            }
+            this.ragTags = {};
+        }
     }
 
     setDependencies(dependencies) {
@@ -155,24 +173,42 @@ class RAGDiaryPlugin {
             processedSystemContent = processedSystemContent.replace(placeholder, retrievedContent);
         }
 
-        // --- 处理 <<...>> RAG 全文检索 ---
+        // --- 处理 <<...>> RAG 全文检索 (标签增强版) ---
         for (const match of fullTextDeclarations) {
             const placeholder = match[0]; // 例如 <<VCP开发进度日记本>>
             const dbName = match[1];      // 例如 "VCP开发进度"
 
             console.log(`[RAGDiaryPlugin] 正在为 <<${dbName}日记本>> 进行相关性评估...`);
+
+            // 1. 基础名称向量
             const dbNameVector = await this.getSingleEmbedding(dbName);
-            
             if (!dbNameVector) {
                 console.error(`[RAGDiaryPlugin] 日记本名称 "${dbName}" 向量化失败，跳过处理。`);
                 processedSystemContent = processedSystemContent.replace(placeholder, '');
                 continue;
             }
+            const baseSimilarity = this.cosineSimilarity(queryVector, dbNameVector);
+            console.log(`[RAGDiaryPlugin] 基础名称 "${dbName}" 的相关度: ${baseSimilarity.toFixed(4)}`);
+            
+            let enhancedSimilarity = 0;
+            const tags = this.ragTags[dbName];
 
-            const similarity = this.cosineSimilarity(queryVector, dbNameVector);
-            console.log(`[RAGDiaryPlugin] <<${dbName}日记本>> 与当前对话的相关度: ${similarity.toFixed(4)}`);
+            // 2. 如果有标签，则计算增强向量的相似度
+            if (tags && tags.length > 0) {
+                const enhancedText = `${dbName}：${tags.join(', ')}`;
+                const enhancedVector = await this.getSingleEmbedding(enhancedText);
+                if (enhancedVector) {
+                    enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
+                     console.log(`[RAGDiaryPlugin] 增强文本 "${enhancedText.substring(0, 50)}..." 的相关度: ${enhancedSimilarity.toFixed(4)}`);
+                }
+            }
+            
+            // 3. 取两种相似度中的最大值作为最终决策依据
+            const finalSimilarity = Math.max(baseSimilarity, enhancedSimilarity);
+            console.log(`[RAGDiaryPlugin] <<${dbName}日记本>> 的最终决策相关度: ${finalSimilarity.toFixed(4)}`);
 
-            if (similarity >= SIMILARITY_THRESHOLD) {
+
+            if (finalSimilarity >= SIMILARITY_THRESHOLD) {
                 console.log(`[RAGDiaryPlugin] 相关度高于阈值 ${SIMILARITY_THRESHOLD}，将注入 "${dbName}" 的完整日记内容。`);
                 const diaryContent = await this.getDiaryContent(dbName);
                 processedSystemContent = processedSystemContent.replace(placeholder, diaryContent);
