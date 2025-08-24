@@ -1,59 +1,8 @@
 const path = require('path');
 const fs = require('fs').promises;
 
-// --- 原有常量 ---
 const CACHE_FILE_PATH = path.join(__dirname, 'dailyhot_cache.md');
 const INTERNAL_TIMEOUT_MS = 30000;
-
-// --- 【新增】指向“V日报日记”的路径常量 ---
-// 我们假定此插件位于 /Plugin/DailyHot/ 目录下，需要跳出两层到项目根目录
-const DIARY_NOTE_PATH = path.join(__dirname, '..', '..', 'dailynote', 'V日报');
-
-
-// --- 【新增】核心函数：将新闻写入日报日记文件夹 ---
-/**
- * 将聚合后的热榜数据按类别写入到指定的日记文件夹中。
- * @param {object} groupedData - 按类别分组后的新闻数据。
- */
-async function writeNewsToDailyNote(groupedData) {
-    try {
-        // 确保目标目录存在，如果不存在则创建
-        await fs.mkdir(DIARY_NOTE_PATH, { recursive: true });
-
-        // 获取当前日期，格式为 YYYY-MM-DD
-        const today = new Date().toISOString().slice(0, 10);
-
-        console.log(`[DailyHot] 开始将热榜写入 V日报日记 文件夹...`);
-
-        // 为每个新闻源（类别）创建一个单独的 .txt 文件
-        for (const category in groupedData) {
-            // 清理文件名，将不适合做文件名的字符替换掉
-            const safeFileName = category.replace(/[\s\/\\]+/g, '_') + '.txt';
-            const datedFileName = `${today}_${safeFileName}`;
-            const filePath = path.join(DIARY_NOTE_PATH, datedFileName);
-            
-            // 格式化文件内容
-            let fileContent = `---
-来源: ${category}
-日期: ${today}
----
-
-`;
-            groupedData[category].forEach((item, index) => {
-                fileContent += `${index + 1}. ${item.title}\n`;
-                fileContent += `链接: ${item.url}\n\n`;
-            });
-
-            // 写入文件
-            await fs.writeFile(filePath, fileContent.trim(), 'utf-8');
-            console.log(`[DailyHot] 成功创建日报文件: ${datedFileName}`);
-        }
-    } catch (error) {
-        // 即便这里失败，也不应该影响主流程的缓存生成
-        console.error(`[DailyHot] 写入日报文件到 V日报日记 文件夹时发生错误: ${error.message}`);
-    }
-}
-
 
 async function fetchSource(source) {
     let routeHandler;
@@ -125,11 +74,6 @@ async function fetchAndProcessData() {
             acc[item.category].push(item);
             return acc;
         }, {});
-
-        // --- 【集成点】在这里调用新增的函数 ---
-        // 在处理主缓存文件之前，先将数据写入日报文件夹
-        await writeNewsToDailyNote(groupedByCategory);
-        // ------------------------------------
 
         for (const category in groupedByCategory) {
             markdownOutput += `## ${category}\n\n`;
