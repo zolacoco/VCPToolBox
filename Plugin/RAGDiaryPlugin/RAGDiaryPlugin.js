@@ -8,7 +8,7 @@ const path = require('path');
 const projectBasePath = process.env.PROJECT_BASE_PATH;
 const dailyNoteRootPath = projectBasePath ? path.join(projectBasePath, 'dailynote') : path.join(__dirname, '..', '..', 'dailynote');
 
-const SIMILARITY_THRESHOLD = 0.5; // 余弦相似度阈值
+const SIMILARITY_THRESHOLD = 0.6; // 余弦相似度阈值
 
 class RAGDiaryPlugin {
     constructor() {
@@ -271,4 +271,5 @@ class RAGDiaryPlugin {
 }
 
 // 导出实例以供 Plugin.js 加载
+
 module.exports = new RAGDiaryPlugin();
