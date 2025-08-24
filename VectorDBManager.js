@@ -279,12 +279,12 @@ class VectorDBManager {
                 await fs.access(indexPath);
                 await fs.access(mapPath);
 
-                const indexData = await fs.readFile(indexPath);
                 // IMPORTANT: The dimension must match your embedding model's output.
                 // You might want to make this configurable.
                 const dimensions = queryVector.length;
                 const index = new HierarchicalNSW('l2', dimensions);
-                index.readIndexSync(indexData);
+                // The readIndexSync method expects a file path (string), not a Buffer.
+                index.readIndexSync(indexPath);
                 
                 const mapData = await fs.readFile(mapPath, 'utf-8');
                 
@@ -292,7 +292,7 @@ class VectorDBManager {
                 this.chunkMaps.set(diaryName, JSON.parse(mapData));
                 console.log(`[VectorDB] Lazily loaded index for "${diaryName}" into memory.`);
             } catch (error) {
-                 console.error(`[VectorDB] Failed to load index for "${diaryName}":`, error);
+                 console.error(`[VectorDB] Failed to load index for "${diaryName}":`, { message: error.message, stack: error.stack });
                  return [];
             }
         }
