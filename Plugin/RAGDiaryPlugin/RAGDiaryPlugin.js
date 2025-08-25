@@ -201,11 +201,10 @@ class RAGDiaryPlugin {
                     let tagName = '';
                     let weight = 1.0;
 
-                    if (typeof tagInfo === 'string') {
-                        tagName = tagInfo;
-                    } else if (typeof tagInfo === 'object' && tagInfo.tag) {
-                        const parts = tagInfo.tag.split(':');
-                        tagName = parts[0];
+                    // 新格式：tagInfo 直接是字符串 "tagName:weight" 或 "tagName"
+                    const parts = tagInfo.split(':');
+                    tagName = parts[0].trim(); // 确保去除空格
+                    if (parts.length > 1) {
                         const parsedWeight = parseFloat(parts[1]);
                         if (!isNaN(parsedWeight)) {
                             weight = parsedWeight;
