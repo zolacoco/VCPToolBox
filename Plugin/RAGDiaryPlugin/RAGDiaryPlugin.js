@@ -8,29 +8,29 @@ const path = require('path');
 const projectBasePath = process.env.PROJECT_BASE_PATH;
 const dailyNoteRootPath = projectBasePath ? path.join(projectBasePath, 'dailynote') : path.join(__dirname, '..', '..', 'dailynote');
 
-const SIMILARITY_THRESHOLD = 0.6; // 余弦相似度阈值
+const GLOBAL_SIMILARITY_THRESHOLD = 0.6; // 全局默认余弦相似度阈值
 
 class RAGDiaryPlugin {
     constructor() {
         this.name = 'RAGDiaryPlugin';
         this.vectorDBManager = null;
-        this.ragTags = {};
-        this.loadTags();
+        this.ragConfig = {};
+        this.loadConfig();
     }
 
-    async loadTags() {
+    async loadConfig() {
         try {
-            const tagsPath = path.join(__dirname, 'rag_tags.json');
-            const data = await fs.readFile(tagsPath, 'utf-8');
-            this.ragTags = JSON.parse(data);
-            console.log('[RAGDiaryPlugin] 成功加载 RAG 标签配置文件。');
+            const configPath = path.join(__dirname, 'rag_tags.json');
+            const data = await fs.readFile(configPath, 'utf-8');
+            this.ragConfig = JSON.parse(data);
+            console.log('[RAGDiaryPlugin] 成功加载 RAG 配置文件 (rag_tags.json)。');
         } catch (error) {
             if (error.code === 'ENOENT') {
                 console.log('[RAGDiaryPlugin] 未找到 rag_tags.json 文件，将仅使用日记本名称进行匹配。');
             } else {
                 console.error('[RAGDiaryPlugin] 加载 rag_tags.json 文件失败:', error);
             }
-            this.ragTags = {};
+            this.ragConfig = {};
         }
     }
 
@@ -173,48 +173,75 @@ class RAGDiaryPlugin {
             processedSystemContent = processedSystemContent.replace(placeholder, retrievedContent);
         }
 
-        // --- 处理 <<...>> RAG 全文检索 (标签增强版) ---
+        // --- 处理 <<...>> RAG 全文检索 (加权标签和独立阈值增强版) ---
         for (const match of fullTextDeclarations) {
-            const placeholder = match[0]; // 例如 <<VCP开发进度日记本>>
-            const dbName = match[1];      // 例如 "VCP开发进度"
+            const placeholder = match[0];
+            const dbName = match[1];
+            const diaryConfig = this.ragConfig[dbName] || {};
+            const localThreshold = diaryConfig.threshold || GLOBAL_SIMILARITY_THRESHOLD;
 
-            console.log(`[RAGDiaryPlugin] 正在为 <<${dbName}日记本>> 进行相关性评估...`);
+            console.log(`[RAGDiaryPlugin] 正在为 <<${dbName}日记本>> 进行相关性评估 (阈值: ${localThreshold})...`);
 
             // 1. 基础名称向量
             const dbNameVector = await this.getSingleEmbedding(dbName);
             if (!dbNameVector) {
-                console.error(`[RAGDiaryPlugin] 日记本名称 "${dbName}" 向量化失败，跳过处理。`);
+                console.error(`[RAGDiaryPlugin] 日记本名称 "${dbName}" 向量化失败，跳过。`);
                 processedSystemContent = processedSystemContent.replace(placeholder, '');
                 continue;
             }
             const baseSimilarity = this.cosineSimilarity(queryVector, dbNameVector);
             console.log(`[RAGDiaryPlugin] 基础名称 "${dbName}" 的相关度: ${baseSimilarity.toFixed(4)}`);
-            
-            let enhancedSimilarity = 0;
-            const tags = this.ragTags[dbName];
 
-            // 2. 如果有标签，则计算增强向量的相似度
-            if (tags && tags.length > 0) {
-                const enhancedText = `${dbName}：${tags.join(', ')}`;
+            // 2. 如果有标签，则计算加权增强向量的相似度
+            let enhancedSimilarity = 0;
+            const tagsConfig = diaryConfig.tags;
+            if (Array.isArray(tagsConfig) && tagsConfig.length > 0) {
+                let weightedTags = [];
+                tagsConfig.forEach(tagInfo => {
+                    let tagName = '';
+                    let weight = 1.0;
+
+                    if (typeof tagInfo === 'string') {
+                        tagName = tagInfo;
+                    } else if (typeof tagInfo === 'object' && tagInfo.tag) {
+                        const parts = tagInfo.tag.split(':');
+                        tagName = parts[0];
+                        const parsedWeight = parseFloat(parts[1]);
+                        if (!isNaN(parsedWeight)) {
+                            weight = parsedWeight;
+                        }
+                    }
+                    
+                    if (tagName) {
+                        // 根据权重重复标签，以增强其在向量空间中的影响
+                        const repetitions = Math.max(1, Math.round(weight));
+                        for (let i = 0; i < repetitions; i++) {
+                            weightedTags.push(tagName);
+                        }
+                    }
+                });
+                
+                const enhancedText = `${dbName} 的相关主题：${weightedTags.join(', ')}`;
                 const enhancedVector = await this.getSingleEmbedding(enhancedText);
+
                 if (enhancedVector) {
                     enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
-                     console.log(`[RAGDiaryPlugin] 增强文本 "${enhancedText.substring(0, 50)}..." 的相关度: ${enhancedSimilarity.toFixed(4)}`);
+                    console.log(`[RAGDiaryPlugin] 加权增强文本的相关度: ${enhancedSimilarity.toFixed(4)}`);
                 }
             }
-            
+
             // 3. 取两种相似度中的最大值作为最终决策依据
             const finalSimilarity = Math.max(baseSimilarity, enhancedSimilarity);
             console.log(`[RAGDiaryPlugin] <<${dbName}日记本>> 的最终决策相关度: ${finalSimilarity.toFixed(4)}`);
 
-
-            if (finalSimilarity >= SIMILARITY_THRESHOLD) {
-                console.log(`[RAGDiaryPlugin] 相关度高于阈值 ${SIMILARITY_THRESHOLD}，将注入 "${dbName}" 的完整日记内容。`);
+            // 4. 使用局部或全局阈值进行决策
+            if (finalSimilarity >= localThreshold) {
+                console.log(`[RAGDiaryPlugin] 相关度高于阈值 ${localThreshold}，将注入 "${dbName}" 的完整日记内容。`);
                 const diaryContent = await this.getDiaryContent(dbName);
                 processedSystemContent = processedSystemContent.replace(placeholder, diaryContent);
             } else {
                 console.log(`[RAGDiaryPlugin] 相关度低于阈值，将忽略 <<${dbName}日记本>>。`);
-                processedSystemContent = processedSystemContent.replace(placeholder, ''); // 如果不相关，则移除占位符
+                processedSystemContent = processedSystemContent.replace(placeholder, '');
             }
         }
 
@@ -271,5 +298,4 @@ class RAGDiaryPlugin {
 }
 
 // 导出实例以供 Plugin.js 加载
-
 module.exports = new RAGDiaryPlugin();
