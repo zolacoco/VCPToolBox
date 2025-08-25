@@ -3,6 +3,7 @@
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto'); // <--- 引入加密模块
 
 // 从 DailyNoteGet 插件借鉴的常量和路径逻辑
 const projectBasePath = process.env.PROJECT_BASE_PATH;
@@ -15,22 +16,118 @@ class RAGDiaryPlugin {
         this.name = 'RAGDiaryPlugin';
         this.vectorDBManager = null;
         this.ragConfig = {};
+        this.enhancedVectorCache = {}; // <--- 新增：用于存储增强向量的缓存
         this.loadConfig();
     }
 
     async loadConfig() {
+        const configPath = path.join(__dirname, 'rag_tags.json');
+        const cachePath = path.join(__dirname, 'vector_cache.json');
+
         try {
-            const configPath = path.join(__dirname, 'rag_tags.json');
-            const data = await fs.readFile(configPath, 'utf-8');
-            this.ragConfig = JSON.parse(data);
-            console.log('[RAGDiaryPlugin] 成功加载 RAG 配置文件 (rag_tags.json)。');
+            const currentConfigHash = await this._getFileHash(configPath);
+            if (!currentConfigHash) {
+                console.log('[RAGDiaryPlugin] 未找到 rag_tags.json 文件，跳过缓存处理。');
+                this.ragConfig = {};
+                return;
+            }
+
+            let cache = null;
+            try {
+                const cacheData = await fs.readFile(cachePath, 'utf-8');
+                cache = JSON.parse(cacheData);
+            } catch (e) {
+                console.log('[RAGDiaryPlugin] 缓存文件不存在或已损坏，将重新构建。');
+            }
+
+            if (cache && cache.sourceHash === currentConfigHash) {
+                // --- 缓存命中 ---
+                console.log('[RAGDiaryPlugin] 缓存有效，从磁盘加载向量...');
+                this.ragConfig = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+                this.enhancedVectorCache = cache.vectors;
+                console.log(`[RAGDiaryPlugin] 成功从缓存加载 ${Object.keys(this.enhancedVectorCache).length} 个向量。`);
+            } else {
+                // --- 缓存失效或未命中 ---
+                if (cache) {
+                    console.log('[RAGDiaryPlugin] rag_tags.json 已更新，正在重建缓存...');
+                } else {
+                    console.log('[RAGDiaryPlugin] 未找到有效缓存，首次构建向量缓存...');
+                }
+
+                const configData = await fs.readFile(configPath, 'utf-8');
+                this.ragConfig = JSON.parse(configData);
+                
+                // 调用 _buildAndSaveCache 来生成向量
+                await this._buildAndSaveCache(currentConfigHash, cachePath);
+            }
+
+        } catch (error) {
+            console.error('[RAGDiaryPlugin] 加载配置文件或处理缓存时发生严重错误:', error);
+            this.ragConfig = {};
+        }
+    }
+
+    async _buildAndSaveCache(configHash, cachePath) {
+        console.log('[RAGDiaryPlugin] 正在为所有日记本请求 Embedding API...');
+        this.enhancedVectorCache = {}; // 清空旧的内存缓存
+
+        for (const dbName in this.ragConfig) {
+            // ... (这里的逻辑和之前 _buildEnhancedVectorCache 内部的 for 循环完全一样)
+            const diaryConfig = this.ragConfig[dbName];
+            const tagsConfig = diaryConfig.tags;
+
+            if (Array.isArray(tagsConfig) && tagsConfig.length > 0) {
+                let weightedTags = [];
+                tagsConfig.forEach(tagInfo => {
+                    const parts = tagInfo.split(':');
+                    const tagName = parts[0].trim();
+                    let weight = 1.0;
+                    if (parts.length > 1) {
+                        const parsedWeight = parseFloat(parts[1]);
+                        if (!isNaN(parsedWeight)) weight = parsedWeight;
+                    }
+                    if (tagName) {
+                        const repetitions = Math.max(1, Math.round(weight));
+                        for (let i = 0; i < repetitions; i++) weightedTags.push(tagName);
+                    }
+                });
+                
+                const enhancedText = `${dbName} 的相关主题：${weightedTags.join(', ')}`;
+                const enhancedVector = await this.getSingleEmbedding(enhancedText);
+
+                if (enhancedVector) {
+                    this.enhancedVectorCache[dbName] = enhancedVector;
+                    console.log(`[RAGDiaryPlugin] -> 已为 "${dbName}" 成功获取向量。`);
+                } else {
+                    console.error(`[RAGDiaryPlugin] -> 为 "${dbName}" 获取向量失败。`);
+                }
+            }
+        }
+        
+        // 构建新的缓存对象并保存到磁盘
+        const newCache = {
+            sourceHash: configHash,
+            createdAt: new Date().toISOString(),
+            vectors: this.enhancedVectorCache,
+        };
+
+        try {
+            await fs.writeFile(cachePath, JSON.stringify(newCache, null, 2), 'utf-8');
+            console.log(`[RAGDiaryPlugin] 向量缓存已成功写入到 ${cachePath}`);
+        } catch (writeError) {
+            console.error('[RAGDiaryPlugin] 写入缓存文件失败:', writeError);
+        }
+    }
+
+    async _getFileHash(filePath) {
+        try {
+            const fileContent = await fs.readFile(filePath, 'utf-8');
+            return crypto.createHash('sha256').update(fileContent).digest('hex');
         } catch (error) {
             if (error.code === 'ENOENT') {
-                console.log('[RAGDiaryPlugin] 未找到 rag_tags.json 文件，将仅使用日记本名称进行匹配。');
-            } else {
-                console.error('[RAGDiaryPlugin] 加载 rag_tags.json 文件失败:', error);
+                return null; // 文件不存在则没有哈希
             }
-            this.ragConfig = {};
+            throw error; // 其他错误则抛出
         }
     }
 
@@ -194,39 +291,14 @@ class RAGDiaryPlugin {
 
             // 2. 如果有标签，则计算加权增强向量的相似度
             let enhancedSimilarity = 0;
-            const tagsConfig = diaryConfig.tags;
-            if (Array.isArray(tagsConfig) && tagsConfig.length > 0) {
-                let weightedTags = [];
-                tagsConfig.forEach(tagInfo => {
-                    let tagName = '';
-                    let weight = 1.0;
+            // const tagsConfig = diaryConfig.tags; // 不再需要这行
+            
+            // 从缓存中直接获取预计算的向量
+            const enhancedVector = this.enhancedVectorCache[dbName];
 
-                    // 新格式：tagInfo 直接是字符串 "tagName:weight" 或 "tagName"
-                    const parts = tagInfo.split(':');
-                    tagName = parts[0].trim(); // 确保去除空格
-                    if (parts.length > 1) {
-                        const parsedWeight = parseFloat(parts[1]);
-                        if (!isNaN(parsedWeight)) {
-                            weight = parsedWeight;
-                        }
-                    }
-                    
-                    if (tagName) {
-                        // 根据权重重复标签，以增强其在向量空间中的影响
-                        const repetitions = Math.max(1, Math.round(weight));
-                        for (let i = 0; i < repetitions; i++) {
-                            weightedTags.push(tagName);
-                        }
-                    }
-                });
-                
-                const enhancedText = `${dbName} 的相关主题：${weightedTags.join(', ')}`;
-                const enhancedVector = await this.getSingleEmbedding(enhancedText);
-
-                if (enhancedVector) {
-                    enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
-                    console.log(`[RAGDiaryPlugin] 加权增强文本的相关度: ${enhancedSimilarity.toFixed(4)}`);
-                }
+            if (enhancedVector) {
+                enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
+                console.log(`[RAGDiaryPlugin] (从缓存) 加权增强文本的相关度: ${enhancedSimilarity.toFixed(4)}`);
             }
 
             // 3. 取两种相似度中的最大值作为最终决策依据
