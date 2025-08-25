@@ -237,11 +237,7 @@
             tagInputs.forEach(input => {
                 const value = input.value.trim();
                 if (value) {
-                    if (value.includes(':')) {
-                        newTags.push({ tag: value });
-                    } else {
-                        newTags.push(value);
-                    }
+                    newTags.push(value); // 新格式：所有标签直接作为字符串保存
                 }
             });
 
