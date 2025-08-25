@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库RAG-Tags编辑器</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="rag_tags_editor.css">
+    <script>
+        // 监听来自父窗口的主题变化消息
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'themeChange') {
+                const theme = event.data.theme;
+                document.documentElement.setAttribute('data-theme', theme);
+            }
+        });
+
+        // 页面加载时，向父窗口请求当前主题
+        window.addEventListener('DOMContentLoaded', () => {
+            if (window.parent && window.parent !== window) {
+                 window.parent.postMessage({ type: 'requestTheme' }, '*');
+            } else {
+                const storedTheme = localStorage.getItem('theme');
+                const prefersDarkScheme = window.matchMedia("(prefers-color-scheme: dark)");
+                if (storedTheme) {
+                    document.documentElement.setAttribute('data-theme', storedTheme);
+                } else {
+                    document.documentElement.setAttribute('data-theme', prefersDarkScheme.matches ? 'dark' : 'light');
+                }
+            }
+        });
+    </script>
+</head>
+<body>
+<div class="container">
+    <div class="controls">
+        <button id="saveButton">保存更改到 rag_tags.json</button>
+        <button id="addKnowledgeBaseButton">添加知识库</button>
+    </div>
+
+    <h2>知识库标签列表</h2>
+    <div id="ragTagsList">
+        <p>正在加载RAG-Tags数据...</p>
+    </div>
+</div>
+
+<script>
+    let ragTagsData = {};
+    const ragTagsListDiv = document.getElementById('ragTagsList');
+    const saveButton = document.getElementById('saveButton');
+    const addKnowledgeBaseButton = document.getElementById('addKnowledgeBaseButton');
+
+    saveButton.addEventListener('click', handleSave);
+    addKnowledgeBaseButton.addEventListener('click', addKnowledgeBase);
+
+    async function loadRagTags() {
+        try {
+            const response = await fetch('/admin_api/rag-tags');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            ragTagsData = await response.json();
+            renderRagTagsList();
+        } catch (error) {
+            console.error("加载RAG-Tags失败:", error);
+            ragTagsListDiv.innerHTML = '<p style="color: red;">加载RAG-Tags失败。</p>';
+        }
+    }
+
+    function renderRagTagsList() {
+        ragTagsListDiv.innerHTML = '';
+
+        if (Object.keys(ragTagsData).length === 0) {
+            ragTagsListDiv.innerHTML = '<p>配置文件为空。</p>';
+            return;
+        }
+
+        for (const kbName in ragTagsData) {
+            if (ragTagsData.hasOwnProperty(kbName)) {
+                const tags = ragTagsData[kbName];
+                const kbDiv = document.createElement('div');
+                kbDiv.className = 'kb-entry';
+                kbDiv.dataset.kbName = kbName;
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'kb-header';
+                
+                const title = document.createElement('h3');
+                title.textContent = kbName;
+                headerDiv.appendChild(title);
+
+                const deleteKbBtn = document.createElement('button');
+                deleteKbBtn.className = 'delete-kb-btn';
+                deleteKbBtn.textContent = '删除知识库';
+                deleteKbBtn.onclick = () => {
+                    if (confirm(`确定要删除知识库 "${kbName}" 吗？`)) {
+                        delete ragTagsData[kbName];
+                        renderRagTagsList();
+                    }
+                };
+                headerDiv.appendChild(deleteKbBtn);
+
+                kbDiv.appendChild(headerDiv);
+
+                const tagsContainer = document.createElement('div');
+                tagsContainer.className = 'tags-container';
+
+                tags.forEach(tag => {
+                    const tagDiv = document.createElement('div');
+                    tagDiv.className = 'tag-item';
+                    
+                    const tagSpan = document.createElement('span');
+                    tagSpan.textContent = tag;
+                    tagDiv.appendChild(tagSpan);
+
+                    const deleteTagBtn = document.createElement('button');
+                    deleteTagBtn.className = 'delete-tag-btn';
+                    deleteTagBtn.textContent = '×';
+                    deleteTagBtn.onclick = () => {
+                       const index = ragTagsData[kbName].indexOf(tag);
+                       if (index > -1) {
+                           ragTagsData[kbName].splice(index, 1);
+                           renderRagTagsList();
+                       }
+                    };
+                    tagDiv.appendChild(deleteTagBtn);
+                    tagsContainer.appendChild(tagDiv);
+                });
+
+                const addTagInput = document.createElement('input');
+                addTagInput.type = 'text';
+                addTagInput.placeholder = '添加新标签...';
+                addTagInput.className = 'add-tag-input';
+                
+                const addTagBtn = document.createElement('button');
+                addTagBtn.textContent = '添加标签';
+                addTagBtn.className = 'add-tag-btn';
+                addTagBtn.onclick = () => {
+                    const newTag = addTagInput.value.trim();
+                    if (newTag && !ragTagsData[kbName].includes(newTag)) {
+                        ragTagsData[kbName].push(newTag);
+                        renderRagTagsList();
+                    }
+                    addTagInput.value = '';
+                };
+
+                const addTagDiv = document.createElement('div');
+                addTagDiv.className = 'add-tag-controls';
+                addTagDiv.appendChild(addTagInput);
+                addTagDiv.appendChild(addTagBtn);
+
+
+                kbDiv.appendChild(tagsContainer);
+                kbDiv.appendChild(addTagDiv);
+                ragTagsListDiv.appendChild(kbDiv);
+            }
+        }
+    }
+
+    function addKnowledgeBase() {
+        const newKbName = prompt("请输入新的知识库名称:");
+        if (newKbName && !ragTagsData.hasOwnProperty(newKbName)) {
+            ragTagsData[newKbName] = [];
+            renderRagTagsList();
+        } else if (newKbName) {
+            alert('该知识库已存在！');
+        }
+    }
+
+    async function handleSave() {
+        try {
+            const response = await fetch('/admin_api/rag-tags', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(ragTagsData)
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                alert(result.message || 'RAG-Tags文件已成功保存。');
+            } else {
+                alert('保存失败: ' + (result.error || '未知错误'));
+                console.error("保存RAG-Tags失败:", result);
+            }
+        } catch (error) {
+            alert('保存RAG-Tags时发生错误: ' + error.message);
+            console.error("保存错误:", error);
+        }
+    }
+
+    // Load data when the page loads
+    window.addEventListener('DOMContentLoaded', loadRagTags);
+</script>
+</body>
+</html>
