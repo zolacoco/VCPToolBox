@@ -114,15 +114,25 @@ h2 {
 .tag-item {
     display: flex;
     align-items: center;
+    gap: 8px;
     background-color: var(--accent-bg);
-    color: var(--primary-text);
-    padding: 5px 10px;
-    border-radius: 15px;
-    font-size: 0.9em;
+    padding: 5px 8px;
+    border-radius: 6px;
 }
 
-.tag-item span {
-    margin-right: 8px;
+.tag-item input {
+    background-color: transparent;
+    border: none;
+    color: var(--primary-text);
+    font-size: 0.9em;
+    outline: none;
+    padding: 2px 5px;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.tag-item input:focus {
+    border-bottom-color: var(--highlight-text);
 }
 
 .delete-tag-btn {
@@ -149,16 +159,7 @@ h2 {
     margin-top: 10px;
 }
 
-.add-tag-input {
-    flex-grow: 1;
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    background-color: var(--input-bg);
-    color: var(--primary-text);
-    font-size: 0.95em;
-}
-
+/* This class is no longer used, but kept for potential future use */
 .add-tag-input:focus {
     outline: none;
     border-color: var(--highlight-text);
