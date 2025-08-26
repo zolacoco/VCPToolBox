@@ -134,21 +134,20 @@ async function callOpenRouterApi(payload) {
  * @returns {Promise<object>} - 格式化后的成功结果对象
  */
 async function processApiResponseAndSaveImage(message, originalArgs) {
-    // 检查消息内容
-    if (!message.content || !Array.isArray(message.content)) {
-        throw new Error('API 响应中没有找到有效的内容数组。');
+    // OpenRouter 返回结构：message.content 是字符串，图像在 message.images 数组中
+    const textContent = message.content || '';
+    
+    if (!message.images || !Array.isArray(message.images) || message.images.length === 0) {
+        throw new Error(`API 未能生成图片，返回信息: ${textContent}`);
     }
 
-    const textContent = message.content.find(item => item.type === 'text');
-    const imageContent = message.content.find(item => item.type === 'image_url');
-
-    if (!imageContent || !imageContent.image_url || !imageContent.image_url.url) {
-        const textResponse = textContent ? textContent.text : 'API 未返回图像内容';
-        throw new Error(`API 未能生成图片，返回信息: ${textResponse}`);
+    const imageData = message.images[0];
+    if (!imageData || !imageData.image_url || !imageData.image_url.url) {
+        throw new Error('API 返回的图像数据格式无效。');
     }
 
     // 处理图像数据
-    const imageUrl = imageContent.image_url.url;
+    const imageUrl = imageData.image_url.url;
     let imageBuffer, mimeType;
 
     if (imageUrl.startsWith('data:')) {
@@ -175,7 +174,7 @@ async function processApiResponseAndSaveImage(message, originalArgs) {
     const accessibleImageUrl = `${VAR_HTTP_URL}:${SERVER_PORT}/pw=${IMAGESERVER_IMAGE_KEY}/images/${relativePathForUrl}`;
 
     // 优先使用 API 返回的文本，如果没有则使用默认文本
-    const modelResponseText = textContent ? textContent.text : "图片已成功处理！";
+    const modelResponseText = textContent || "图片已成功处理！";
     const finalResponseText = `${modelResponseText}\n\n**图片详情:**\n- 提示词: ${originalArgs.prompt}\n- 可访问URL: ${accessibleImageUrl}\n\n请利用可访问url将图片转发给用户`;
 
     const base64Image = imageBuffer.toString('base64');
@@ -198,7 +197,7 @@ async function processApiResponseAndSaveImage(message, originalArgs) {
             fileName: generatedFileName,
             ...originalArgs,
             imageUrl: accessibleImageUrl,
-            modelResponseText: textContent ? textContent.text : null
+            modelResponseText: textContent || null
         }
     };
 }
