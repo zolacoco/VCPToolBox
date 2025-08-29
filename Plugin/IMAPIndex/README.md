@@ -236,7 +236,7 @@ node IMAPIndex.js
 - 证书错误：
   - 仅在可接受风险时将 IMAP_PROXY_TLS_REJECT_UNAUTHORIZED=false
 
-## Stork 日记 TXT 输出（手动硬编码）
+## Stork 日记（PubMed 版）TXT 输出（手动硬编码）
 
 为了方便手工控制 TXT 输出位置，当前实现采用在脚本中硬编码日记目录名的方式。若需修改输出目录，请按下面步骤操作：
 
