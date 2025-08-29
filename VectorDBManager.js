@@ -404,6 +404,29 @@ class VectorDBManager {
 
         // 2. Delete vectors
         if (labelsToDelete.length > 0) {
+            // --- Diagnostic Logging ---
+            // To make logs less confusing, check if deletions are from files that no longer exist.
+            try {
+                const diaryPath = path.join(DIARY_ROOT_PATH, diaryName);
+                const files = await fs.readdir(diaryPath);
+                const currentFiles = new Set(files);
+                const deletedFilesSources = new Set();
+                
+                labelsToDelete.forEach(label => {
+                    const chunkData = chunkMap[label]; // Check original chunkMap before deletion
+                    if (chunkData && !currentFiles.has(chunkData.sourceFile)) {
+                        deletedFilesSources.add(chunkData.sourceFile);
+                    }
+                });
+
+                if (deletedFilesSources.size > 0) {
+                    console.log(`[VectorDB] Note: Deleting vectors from file(s) that no longer exist: ${[...deletedFilesSources].join(', ')}`);
+                }
+            } catch (e) {
+                console.warn("[VectorDB] Could not perform diagnostic check for deleted files.", e.message);
+            }
+            // --- End Diagnostic Logging ---
+
             console.log(`[VectorDB] Deleting ${labelsToDelete.length} vectors from "${diaryName}".`);
             labelsToDelete.forEach(label => {
                 try {
@@ -456,7 +479,7 @@ class VectorDBManager {
      * @param {number} [k=3] - The number of nearest neighbors to return.
      * @returns {Promise<object[]>} - An array of the most relevant chunk objects.
      */
-    async search(diaryName, queryVector, k = 3) {
+    async search(diaryName, queryVector, k = 3) { 
         console.log(`[VectorDB][Search] Received search request for "${diaryName}".`);
         const isLoaded = await this.loadIndexForSearch(diaryName, queryVector.length);
         if (!isLoaded) {
