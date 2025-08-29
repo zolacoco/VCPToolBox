@@ -139,16 +139,15 @@ class VectorDBManager {
     }
     
     /**
-     * Calculates changes for a diary book using the auto-increment ID strategy.
+     * Calculates changes for a diary book using a more robust diffing strategy.
      * @param {string} diaryName The name of the diary book.
      * @returns {Promise<object>} A changeset object.
      */
     async calculateChanges(diaryName) {
         const diaryPath = path.join(DIARY_ROOT_PATH, diaryName);
-        const oldFileHashes = this.manifest[diaryName] || {};
         const newFileHashes = {};
 
-        // 1. Load the old chunk map to get a hash -> label mapping
+        // 1. Load old state from the chunk map
         const safeFileNameBase = Buffer.from(diaryName, 'utf-8').toString('base64url');
         const mapPath = path.join(VECTOR_STORE_PATH, `${safeFileNameBase}_map.json`);
         let oldChunkMap = {};
@@ -156,55 +155,50 @@ class VectorDBManager {
             oldChunkMap = JSON.parse(await fs.readFile(mapPath, 'utf-8'));
         } catch (e) { /* Map doesn't exist, treat as empty */ }
         
-        const oldChunkHashes = new Map(Object.entries(oldChunkMap).map(([label, data]) => [data.chunkHash, Number(label)]));
+        const oldChunkHashToLabel = new Map(Object.entries(oldChunkMap).map(([label, data]) => [data.chunkHash, Number(label)]));
 
-        const changeset = {
-            diaryName,
-            chunksToAdd: [],    // { text, sourceFile, chunkHash }
-            labelsToDelete: [], // [label_number]
-            newFileHashes: {}
-        };
-
+        // 2. Build current state from disk
+        const currentChunkData = new Map(); // hash -> { text, sourceFile }
         const files = await fs.readdir(diaryPath);
         const relevantFiles = files.filter(f => f.toLowerCase().endsWith('.txt') || f.toLowerCase().endsWith('.md'));
-        const processedFiles = new Set();
 
         for (const file of relevantFiles) {
-            processedFiles.add(file);
             const filePath = path.join(diaryPath, file);
             const content = await fs.readFile(filePath, 'utf-8');
-            const currentFileHash = crypto.createHash('md5').update(content).digest('hex');
-            newFileHashes[file] = currentFileHash;
-
-            if (oldFileHashes[file] === currentFileHash) {
-                continue; // Skip unchanged files
-            }
-
-            const newChunks = chunkText(content);
-            for (const chunk of newChunks) {
+            newFileHashes[file] = crypto.createHash('md5').update(content).digest('hex');
+            const chunks = chunkText(content);
+            for (const chunk of chunks) {
                 const chunkHash = crypto.createHash('sha256').update(chunk).digest('hex');
-                if (oldChunkHashes.has(chunkHash)) {
-                    // This chunk is unchanged, remove it from the deletion map
-                    oldChunkHashes.delete(chunkHash);
-                } else {
-                    // This is a new chunk
-                    changeset.chunksToAdd.push({ text: chunk, sourceFile: file, chunkHash });
+                if (!currentChunkData.has(chunkHash)) {
+                    currentChunkData.set(chunkHash, { text: chunk, sourceFile: file });
                 }
             }
         }
 
-        // Any hashes left in oldChunkHashes belong to deleted chunks or deleted files
-        changeset.labelsToDelete = [...oldChunkHashes.values()];
-        
-        // Find files that were deleted entirely
-        for (const oldFile in oldFileHashes) {
-            if (!processedFiles.has(oldFile)) {
-                // We don't need to do anything extra here, as their chunks are already in the deletion list.
+        const currentChunkHashes = new Set(currentChunkData.keys());
+
+        // 3. Compare old and new states to build the changeset
+        const chunksToAdd = [];
+        for (const currentHash of currentChunkHashes) {
+            if (!oldChunkHashToLabel.has(currentHash)) {
+                const data = currentChunkData.get(currentHash);
+                chunksToAdd.push({ ...data, chunkHash: currentHash });
             }
         }
-        
-        changeset.newFileHashes = newFileHashes;
-        return changeset;
+
+        const labelsToDelete = [];
+        for (const [oldHash, oldLabel] of oldChunkHashToLabel.entries()) {
+            if (!currentChunkHashes.has(oldHash)) {
+                labelsToDelete.push(oldLabel);
+            }
+        }
+
+        return {
+            diaryName,
+            chunksToAdd,
+            labelsToDelete,
+            newFileHashes
+        };
     }
 
     /**
@@ -242,20 +236,26 @@ class VectorDBManager {
 
         this.activeWorkers.add(diaryName);
         try {
+            // First, get the size of the old index to calculate the change ratio correctly.
+            const safeFileNameBase = Buffer.from(diaryName, 'utf-8').toString('base64url');
+            const mapPath = path.join(VECTOR_STORE_PATH, `${safeFileNameBase}_map.json`);
+            let totalOldChunks = 0;
+            try {
+                const oldChunkMap = JSON.parse(await fs.readFile(mapPath, 'utf-8'));
+                totalOldChunks = Object.keys(oldChunkMap).length;
+            } catch (e) { /* Map doesn't exist, so count is 0 */ }
+
             console.log(`[VectorDB] Calculating changes for "${diaryName}"...`);
             const changeset = await this.calculateChanges(diaryName);
             const { chunksToAdd, labelsToDelete } = changeset;
-
-            const totalChunksInManifest = Object.values(this.manifest[diaryName] || {})
-                .reduce((acc, file) => acc + (file.chunkHashes ? file.chunkHashes.length : 0), 0);
-
+            
             const changeThreshold = 0.5; // 50% change threshold to trigger full rebuild
-            const changeRatio = totalChunksInManifest > 0
-                ? (chunksToAdd.length + labelsToDelete.length) / totalChunksInManifest
-                : 1.0;
+            const changeRatio = totalOldChunks > 0
+                ? (chunksToAdd.length + labelsToDelete.length) / totalOldChunks
+                : 1.0; // If there were 0 chunks before, any addition is a 100% change.
 
             // Decision Logic: When to do a full rebuild vs. incremental update.
-            if (!this.manifest[diaryName] || changeRatio > changeThreshold) {
+            if (totalOldChunks === 0 || changeRatio > changeThreshold) {
                 console.log(`[VectorDB] Major changes detected (${(changeRatio * 100).toFixed(1)}%). Scheduling a full rebuild for "${diaryName}".`);
                 this.runFullRebuildWorker(diaryName);
             } else if (chunksToAdd.length > 0 || labelsToDelete.length > 0) {
