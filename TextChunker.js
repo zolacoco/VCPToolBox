@@ -26,8 +26,23 @@ function chunkText(text, maxTokens = safeMaxTokens, overlapTokens = defaultOverl
     let currentTokens = 0;
 
     for (let i = 0; i < sentences.length; i++) {
-        const sentence = sentences[i];
-        const sentenceTokens = encoding.encode(sentence).length;
+        let sentence = sentences[i];
+        let sentenceTokens = encoding.encode(sentence).length;
+
+        // 处理超长句子：如果单个句子超过maxTokens，需要强制分割
+        if (sentenceTokens > maxTokens) {
+            // 先保存当前切片（如果有内容）
+            if (currentChunk.trim()) {
+                chunks.push(currentChunk.trim());
+                currentChunk = "";
+                currentTokens = 0;
+            }
+            
+            // 对超长句子进行强制分割
+            const forceSplitChunks = forceSplitLongText(sentence, maxTokens, overlapTokens);
+            chunks.push(...forceSplitChunks);
+            continue;
+        }
 
         if (currentTokens + sentenceTokens > maxTokens) {
             chunks.push(currentChunk.trim());
@@ -54,9 +69,57 @@ function chunkText(text, maxTokens = safeMaxTokens, overlapTokens = defaultOverl
         chunks.push(currentChunk.trim());
     }
     
-    // 注意：这里只是一个基础实现，更复杂的可能需要处理单个句子超长的情况。
-    // 但对于日记这种文体，此算法已相当可靠。
     return chunks;
+}
+
+/**
+ * 强制分割超长文本
+ * @param {string} text - 需要分割的超长文本
+ * @param {number} maxTokens - 每个切片的最大token数
+ * @param {number} overlapTokens - 切片间的重叠token数
+ * @returns {string[]} 分割后的文本块数组
+ */
+function forceSplitLongText(text, maxTokens, overlapTokens) {
+    const chunks = [];
+    const tokens = encoding.encode(text);
+    
+    let start = 0;
+    while (start < tokens.length) {
+        let end = Math.min(start + maxTokens, tokens.length);
+        
+        // 尝试在合适的位置断开（避免在词汇中间断开）
+        if (end < tokens.length) {
+            const chunkTokens = tokens.slice(start, end);
+            let chunkText = encoding.decode(chunkTokens);
+            
+            // 尝试在标点符号或空白处断开
+            const breakPoints = ['\n', '。', '！', '？', '，', '；', '：', ' ', '\t'];
+            let bestBreakPoint = -1;
+            
+            for (let i = chunkText.length - 1; i >= Math.max(0, chunkText.length - 200); i--) {
+                if (breakPoints.includes(chunkText[i])) {
+                    bestBreakPoint = i + 1;
+                    break;
+                }
+            }
+            
+            if (bestBreakPoint > 0) {
+                chunkText = chunkText.substring(0, bestBreakPoint);
+                end = start + encoding.encode(chunkText).length;
+            }
+            
+            chunks.push(chunkText.trim());
+        } else {
+            // 最后一块
+            const chunkTokens = tokens.slice(start);
+            chunks.push(encoding.decode(chunkTokens).trim());
+        }
+        
+        // 计算下一个起始位置（考虑重叠）
+        start = Math.max(start + 1, end - overlapTokens);
+    }
+    
+    return chunks.filter(chunk => chunk.length > 0);
 }
 
 module.exports = { chunkText };
