@@ -1,12 +1,14 @@
 // TextChunker.js
-require('dotenv').config();
+require('dotenv').config({ path: './config.env' });
 const { get_encoding } = require("@dqbd/tiktoken"); // 假设您已安装 tiktoken 用于精确计算
 const encoding = get_encoding("cl100k_base"); // gpt-4, gpt-3.5, embedding models 常用
 
-// 从 .env 文件读取最大 token 数，并应用85%的安全边界
-const embeddingMaxToken = parseInt(process.env.WhitelistEmbeddingModelMaxToken, 10) || 500;
+// 从 config.env 文件读取最大 token 数，并应用85%的安全边界
+const embeddingMaxToken = parseInt(process.env.WhitelistEmbeddingModelMaxToken, 10) || 8000;
 const safeMaxTokens = Math.floor(embeddingMaxToken * 0.85);
 const defaultOverlapTokens = Math.floor(safeMaxTokens * 0.1); // 重叠部分为最大值的10%
+
+console.log(`[TextChunker] 配置加载: MaxToken=${embeddingMaxToken}, SafeMaxTokens=${safeMaxTokens}, OverlapTokens=${defaultOverlapTokens}`);
 
 /**
  * 智能文本切分器

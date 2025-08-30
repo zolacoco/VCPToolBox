@@ -536,6 +536,8 @@ async function getEmbeddingsInWorker(chunks, config) {
     const allVectors = [];
     // Reading from process.env here as a fallback in worker context
     const batchSize = parseInt(process.env.WhitelistEmbeddingModelList) || 5;
+    
+    console.log(`[VectorDB][Worker] 批量处理配置: batchSize=${batchSize}, 总文本块数=${chunks.length}`);
 
     for (let i = 0; i < chunks.length; i += batchSize) {
         const batch = chunks.slice(i, i + batchSize);
