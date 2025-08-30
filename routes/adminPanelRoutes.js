@@ -457,8 +457,17 @@ module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurre
         
         setTimeout(() => {
             console.log('[AdminPanelRoutes] Received restart command. Shutting down...');
-            process.exit(1); 
-        }, 1000); 
+            
+            // 强制清除Node.js模块缓存，特别是TextChunker.js
+            const moduleKeys = Object.keys(require.cache);
+            moduleKeys.forEach(key => {
+                if (key.includes('TextChunker.js') || key.includes('VectorDBManager.js')) {
+                    delete require.cache[key];
+                }
+            });
+            
+            process.exit(1);
+        }, 1000);
     });
      
 
@@ -999,6 +1008,83 @@ module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurre
         }
     });
     // --- End RAG Tags API ---
+
+    // --- VCPTavern API ---
+    adminApiRouter.get('/vcptavern/presets', async (req, res) => {
+        const presetsPath = path.join(__dirname, '..', 'Plugin', 'VCPTavern', 'presets');
+        try {
+            await fs.mkdir(presetsPath, { recursive: true }); // Ensure directory exists
+            const files = await fs.readdir(presetsPath);
+            const jsonFiles = files.filter(file => file.toLowerCase().endsWith('.json'));
+            
+            const presets = await Promise.all(jsonFiles.map(async (file) => {
+                try {
+                    const filePath = path.join(presetsPath, file);
+                    const content = await fs.readFile(filePath, 'utf-8');
+                    const preset = JSON.parse(content);
+                    return {
+                        filename: file,
+                        name: preset.name || file.replace('.json', ''),
+                        ...preset
+                    };
+                } catch (error) {
+                    console.warn(`[AdminPanelRoutes] Error reading preset file ${file}:`, error);
+                    return null;
+                }
+            }));
+            
+            res.json(presets.filter(preset => preset !== null));
+        } catch (error) {
+            console.error('[AdminPanelRoutes API] Error listing VCPTavern presets:', error);
+            res.status(500).json({ error: 'Failed to list VCPTavern presets', details: error.message });
+        }
+    });
+
+    adminApiRouter.get('/vcptavern/presets/:filename', async (req, res) => {
+        const { filename } = req.params;
+        if (!filename.toLowerCase().endsWith('.json')) {
+            return res.status(400).json({ error: 'Invalid file name. Must be a .json file.' });
+        }
+        const filePath = path.join(__dirname, '..', 'Plugin', 'VCPTavern', 'presets', filename);
+
+        try {
+            await fs.access(filePath);
+            const content = await fs.readFile(filePath, 'utf-8');
+            res.json(JSON.parse(content));
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                res.status(404).json({ error: `VCPTavern preset '${filename}' not found.` });
+            } else {
+                console.error(`[AdminPanelRoutes API] Error reading VCPTavern preset ${filename}:`, error);
+                res.status(500).json({ error: `Failed to read VCPTavern preset ${filename}`, details: error.message });
+            }
+        }
+    });
+
+    adminApiRouter.post('/vcptavern/presets/:filename', async (req, res) => {
+        const { filename } = req.params;
+        const data = req.body;
+
+        if (!filename.toLowerCase().endsWith('.json')) {
+            return res.status(400).json({ error: 'Invalid file name. Must be a .json file.' });
+        }
+        if (typeof data !== 'object' || data === null) {
+            return res.status(400).json({ error: 'Invalid request body. Expected a JSON object.' });
+        }
+
+        const presetsPath = path.join(__dirname, '..', 'Plugin', 'VCPTavern', 'presets');
+        const filePath = path.join(presetsPath, filename);
+
+        try {
+            await fs.mkdir(presetsPath, { recursive: true }); // Ensure directory exists
+            await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+            res.json({ message: `VCPTavern preset '${filename}' saved successfully.` });
+        } catch (error) {
+            console.error(`[AdminPanelRoutes API] Error saving VCPTavern preset ${filename}:`, error);
+            res.status(500).json({ error: `Failed to save VCPTavern preset ${filename}`, details: error.message });
+        }
+    });
+    // --- End VCPTavern API ---
     
     return adminApiRouter;
 };
