@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const activityChartCanvas = document.getElementById('activity-chart-canvas'); // New canvas element
     let monitorIntervalId = null; // For dashboard auto-refresh
     let activityDataPoints = new Array(60).fill(0); // Holds the last 60 data points for the chart
-    let lastLogCheckTime = new Date();
+    let lastLogCheckTime = null; // Initialize to null, will be set to the latest log timestamp on first run
 
     // Daily Notes Manager Elements
     const dailyNotesSection = document.getElementById('daily-notes-manager-section'); // The main section for daily notes
@@ -1053,21 +1053,37 @@ Description Length: ${newDescription.length}`);
             const logData = await apiFetch(`${API_BASE_URL}/server-log`, {}, false);
             const logLines = logData.content.split('\n');
             
-            const newNow = new Date();
             let newLogsCount = 0;
+            let latestTimeInThisBatch = null;
 
             const regex = /\[(\d{4}\/\d{1,2}\/\d{1,2}\s\d{1,2}:\d{2}:\d{2})\]/;
             for (const line of logLines) {
                 const match = line.match(regex);
                 if (match && match[1]) {
                     const timestamp = new Date(match[1]);
-                    if (timestamp > lastLogCheckTime) {
+                    if (isNaN(timestamp.getTime())) {
+                        continue; // Skip invalid dates
+                    }
+
+                    // On the very first run, lastLogCheckTime will be null.
+                    // We just want to find the latest timestamp to set a baseline.
+                    // On subsequent runs, we count logs newer than our last known time.
+                    if (lastLogCheckTime && timestamp > lastLogCheckTime) {
                         newLogsCount++;
+                    }
+
+                    // Track the most recent timestamp seen in this fetched log content
+                    if (!latestTimeInThisBatch || timestamp > latestTimeInThisBatch) {
+                        latestTimeInThisBatch = timestamp;
                     }
                 }
             }
             
-            lastLogCheckTime = newNow;
+            // Update our reference time to the latest timestamp we found in the logs.
+            // This makes the check independent of client-side clock and corrects for skew.
+            if (latestTimeInThisBatch) {
+                lastLogCheckTime = latestTimeInThisBatch;
+            }
             
             // Push new data and remove the oldest
             activityDataPoints.push(newLogsCount);
