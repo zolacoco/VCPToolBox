@@ -27,9 +27,7 @@
         "commandIdentifier": "DoubaoEditImage",
         "description": "【图生图/修图】调用此工具通过 DMXAPI (使用 doubao-seedream-4-0-250828 模型) 修改现有图片。请在您的回复中，使用以下精确格式来请求图片修改，确保所有参数值都用「始」和「末」准确包裹：\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」DoubaoGen「末」,\ncommand:「始」DoubaoEditImage「末」,\nprompt:「始」(必需) 用于指导图片修改的详细提示词。「末」,\nimage:「始」(必需) 用于图生图的图片来源，可以是公网可访问的 https URL，或者是分布式服务器的本地文件路径 (格式为 file:///...)。「末」,\nresolution:「始」(必需) 图片分辨率，格式为“宽x高”，可设为“adaptive”以自适应原图尺寸。「末」,\n(可选参数):\nseed:「始」整数种子「末」 - 通常省略以使用随机种子。\nguidance_scale:「始」范围0-10，控制与原图的相似度，值越小越相似。「末」\n<<<[END_TOOL_REQUEST]>>>\n\n重要提示给AI：\n执行完毕后，您将收到图片的URL和路径，请使用 `<img>` 标签直接展示图片给用户。",
         "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」DoubaoGen「末」,\ncommand:「始」DoubaoEditImage「末」,\nprompt:「始」给这个女孩戴上墨镜「末」,\nimage:「始」https://www.dmxapi.cn/images/i2i_demo.png「末」,\nresolution:「始」adaptive「末」,\nguidance_scale:「始」5.5「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
-      }
-    ],
-    "composeCommands": [
+      },
       {
         "commandIdentifier": "DoubaoComposeImage",
         "description": "【多图融合/对话】调用此工具通过 DMXAPI (使用 doubao-seedream-4-0-250828 模型) 融合多张图片或基于多张图片进行对话。请在您的回复中，使用以下精确格式来请求，确保所有参数值都用「始」和「末」准确包裹：\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」DoubaoGen「末」,\ncommand:「始」DoubaoComposeImage「末」,\nprompt:「始」(必需) 用于指导图片融合或对话的详细提示词。「末」,\nimage_1:「始」(必需) 第1张图片来源，可以是公网 https URL 或本地 file:/// 路径。「末」,\nimage_2:「始」(可选) 第2张图片来源。「末」,\nimage_N:「始」(可选) 第N张图片来源，以此类推。「末」,\nresolution:「始」(必需) 图片分辨率，格式为“宽x高”，可设为“adaptive”以自适应原图尺寸。「末」,\n(可选参数):\nseed:「始」整数种子「末」,\nguidance_scale:「始」范围0-10，控制与原图的相似度，值越小越相似。「末」\n<<<[END_TOOL_REQUEST]>>>\n\n重要提示给AI：\n执行完毕后，您将收到图片的URL和路径，请使用 `<img>` 标签直接展示图片给用户。",
