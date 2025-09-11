@@ -957,6 +957,55 @@ class PluginManager {
             // 注销后重建描述
             this.buildVCPDescription();
         }
+        
+        // 新增：清理分布式静态占位符
+        this.clearDistributedStaticPlaceholders(serverId);
+    }
+
+    // 新增：更新分布式静态占位符
+    updateDistributedStaticPlaceholders(serverId, serverName, placeholders) {
+        if (this.debugMode) {
+            console.log(`[PluginManager] Updating static placeholders from distributed server ${serverName} (${serverId})`);
+        }
+        
+        for (const [placeholder, value] of Object.entries(placeholders)) {
+            // 为分布式占位符添加服务器来源标识
+            const distributedKey = `${placeholder}@@${serverId}`;
+            this.staticPlaceholderValues.set(placeholder, value);
+            
+            if (this.debugMode) {
+                console.log(`[PluginManager] Updated distributed placeholder ${placeholder} from ${serverName}: ${value.substring(0, 100)}${value.length > 100 ? '...' : ''}`);
+            }
+        }
+        
+        // 强制日志记录分布式静态占位符更新
+        console.log(`[PluginManager] Updated ${Object.keys(placeholders).length} static placeholders from distributed server ${serverName}.`);
+    }
+
+    // 新增：清理分布式静态占位符
+    clearDistributedStaticPlaceholders(serverId) {
+        const placeholdersToRemove = [];
+        
+        for (const [placeholder, value] of this.staticPlaceholderValues.entries()) {
+            // 查找属于该服务器的占位符（基于某种标识）
+            // 由于我们没有直接的映射关系，这里我们可以选择保守策略
+            // 仅在明确知道是分布式占位符时才删除
+            const distributedKey = `${placeholder}@@${serverId}`;
+            if (this.staticPlaceholderValues.has(distributedKey)) {
+                placeholdersToRemove.push(placeholder);
+            }
+        }
+        
+        for (const placeholder of placeholdersToRemove) {
+            this.staticPlaceholderValues.delete(placeholder);
+            if (this.debugMode) {
+                console.log(`[PluginManager] Removed distributed placeholder ${placeholder} from disconnected server ${serverId}`);
+            }
+        }
+        
+        if (placeholdersToRemove.length > 0) {
+            console.log(`[PluginManager] Cleared ${placeholdersToRemove.length} static placeholders from disconnected server ${serverId}.`);
+        }
     }
 }
 
