@@ -2,13 +2,39 @@
 const messageProcessor = require('./messageProcessor.js');
 const vcpInfoHandler = require('../vcpInfoHandler.js');
 
+// A helper function to handle fetch with retries for specific status codes
+async function fetchWithRetry(url, options, retries = 3, delay = 1000, debugMode = false) {
+    const { default: fetch } = await import('node-fetch');
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(url, options);
+            if (response.status === 500 || response.status === 503) {
+                if (debugMode) {
+                    console.warn(`[Fetch Retry] Received status ${response.status}. Retrying in ${delay}ms... (${i + 1}/${retries})`);
+                }
+                await new Promise(resolve => setTimeout(resolve, delay * (i + 1))); // Increase delay for subsequent retries
+                continue; // Try again
+            }
+            return response; // Success or non-retriable error
+        } catch (error) {
+            if (i === retries - 1) {
+                console.error(`[Fetch Retry] All retries failed. Last error: ${error.message}`);
+                throw error; // Rethrow the last error after all retries fail
+            }
+            if (debugMode) {
+                console.warn(`[Fetch Retry] Fetch failed with error: ${error.message}. Retrying in ${delay}ms... (${i + 1}/${retries})`);
+            }
+            await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+        }
+    }
+    throw new Error('Fetch failed after all retries.');
+}
 class ChatCompletionHandler {
     constructor(config) {
         this.config = config;
     }
 
     async handle(req, res, forceShowVCP = false) {
-        const { default: fetch } = await import('node-fetch');
         const {
             apiUrl,
             apiKey,
@@ -21,7 +47,9 @@ class ChatCompletionHandler {
             DEBUG_MODE,
             SHOW_VCP_OUTPUT,
             maxVCPLoopStream,
-            maxVCPLoopNonStream
+            maxVCPLoopNonStream,
+            apiRetries,
+            apiRetryDelay
         } = this.config;
 
         const shouldShowVCP = SHOW_VCP_OUTPUT || forceShowVCP;
@@ -149,7 +177,7 @@ class ChatCompletionHandler {
             const isOriginalRequestStreaming = originalBody.stream === true;
             const willStreamResponse = isOriginalRequestStreaming;
 
-            let firstAiAPIResponse = await fetch(`${apiUrl}/v1/chat/completions`, {
+            let firstAiAPIResponse = await fetchWithRetry(`${apiUrl}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -159,7 +187,7 @@ class ChatCompletionHandler {
                 },
                 body: JSON.stringify({ ...originalBody, stream: willStreamResponse }),
                 signal: abortController.signal,
-            });
+            }, apiRetries, apiRetryDelay, DEBUG_MODE);
 
             const isUpstreamStreaming = willStreamResponse && firstAiAPIResponse.headers.get('content-type')?.includes('text/event-stream');
 
@@ -588,7 +616,7 @@ class ChatCompletionHandler {
                         res.write('\n'); // 在下一个AI响应开始前，向客户端发送一个换行符
                     }
                     if (DEBUG_MODE) console.log('[VCP Stream Loop] Fetching next AI response.');
-                    const nextAiAPIResponse = await fetch(`${apiUrl}/v1/chat/completions`, {
+                    const nextAiAPIResponse = await fetchWithRetry(`${apiUrl}/v1/chat/completions`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -598,7 +626,7 @@ class ChatCompletionHandler {
                         },
                         body: JSON.stringify({ ...originalBody, messages: currentMessagesForLoop, stream: true }),
                         signal: abortController.signal, // 传递中止信号
-                    });
+                    }, apiRetries, apiRetryDelay, DEBUG_MODE);
 
                     if (!nextAiAPIResponse.ok) {
                         const errorBodyText = await nextAiAPIResponse.text();
@@ -852,7 +880,7 @@ class ChatCompletionHandler {
 
                         // Fetch the next AI response
                         if (DEBUG_MODE) console.log("[Multi-Tool] Fetching next AI response after processing tools.");
-                        const recursionAiResponse = await fetch(`${apiUrl}/v1/chat/completions`, {
+                        const recursionAiResponse = await fetchWithRetry(`${apiUrl}/v1/chat/completions`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -862,7 +890,7 @@ class ChatCompletionHandler {
                             },
                             body: JSON.stringify({ ...originalBody, messages: currentMessagesForNonStreamLoop, stream: false }),
                             signal: abortController.signal, // 传递中止信号
-                        });
+                        }, apiRetries, apiRetryDelay, DEBUG_MODE);
 
                         if (!recursionAiResponse.ok) {
                             const errorBodyText = await recursionAiResponse.text();
