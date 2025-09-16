@@ -232,8 +232,10 @@ class RAGDiaryPlugin {
 
         const ragDeclarations = [...systemMessage.content.matchAll(/\[\[(.*?)日记本(?::(\d+\.?\d*))?\]\]/g)];
         const fullTextDeclarations = [...systemMessage.content.matchAll(/<<(.*?)日记本>>/g)];
+        const hybridDeclarations = [...systemMessage.content.matchAll(/《《(.*?)日记本(?::(\d+\.?\d*))?》》/g)];
 
-        if (ragDeclarations.length === 0 && fullTextDeclarations.length === 0) {
+
+        if (ragDeclarations.length === 0 && fullTextDeclarations.length === 0 && hybridDeclarations.length === 0) {
             return messages; // 没有发现RAG声明，直接返回
         }
         
@@ -277,6 +279,7 @@ class RAGDiaryPlugin {
             let contentWithoutPlaceholders = systemMessage.content;
             ragDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
             fullTextDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
+            hybridDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
             messages.find(m => m.role === 'system').content = contentWithoutPlaceholders;
             return messages;
         }
@@ -289,6 +292,7 @@ class RAGDiaryPlugin {
             let contentWithoutPlaceholders = systemMessage.content;
             ragDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
             fullTextDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
+            hybridDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
             messages.find(m => m.role === 'system').content = contentWithoutPlaceholders;
             return messages;
         }
@@ -369,10 +373,66 @@ class RAGDiaryPlugin {
             }
         }
 
+        // --- 处理《〈...〉》混合模式：先判断阈值，再进行片段检索 ---
+        for (const match of hybridDeclarations) {
+            const placeholder = match[0];      // 例如 《《小克日记本:1.5》》
+            const dbName = match[1];           // 例如 "小克"
+            const kMultiplier = match[2] ? parseFloat(match[2]) : 1.0; // 获取K值乘数
+
+            const diaryConfig = this.ragConfig[dbName] || {};
+            const localThreshold = diaryConfig.threshold || GLOBAL_SIMILARITY_THRESHOLD;
+
+            console.log(`[RAGDiaryPlugin] 正在为《《${dbName}日记本》》进行相关性评估 (阈值: ${localThreshold})...`);
+
+            // 1. 计算相似度 (逻辑与 <<>> 模式完全相同)
+            const dbNameVector = await this.getSingleEmbedding(dbName);
+            if (!dbNameVector) {
+                console.error(`[RAGDiaryPlugin] 日记本名称 "${dbName}" 向量化失败，跳过。`);
+                processedSystemContent = processedSystemContent.replace(placeholder, '');
+                continue;
+            }
+            const baseSimilarity = this.cosineSimilarity(queryVector, dbNameVector);
+            let enhancedSimilarity = 0;
+            const enhancedVector = this.enhancedVectorCache[dbName];
+
+            if (enhancedVector) {
+                enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
+            }
+            const finalSimilarity = Math.max(baseSimilarity, enhancedSimilarity);
+            console.log(`[RAGDiaryPlugin] 《《${dbName}日记本》》 的最终决策相关度: ${finalSimilarity.toFixed(4)}`);
+
+            // 2. 决策：如果高于阈值，则执行片段检索
+            if (finalSimilarity >= localThreshold) {
+                console.log(`[RAGDiaryPlugin] 相关度高于阈值 ${localThreshold}，将为 "${dbName}" 执行片段检索。`);
+                
+                // 执行与 [[]] 模式完全相同的检索逻辑
+                const finalK = Math.max(1, Math.round(dynamicK * kMultiplier));
+                if (kMultiplier !== 1.0) {
+                    console.log(`[RAGDiaryPlugin] 应用K值乘数: ${kMultiplier}. (基础K: ${dynamicK} -> 最终K: ${finalK})`);
+                }
+
+                const searchResults = await this.vectorDBManager.search(dbName, queryVector, finalK);
+                
+                let retrievedContent = `\n[--- 从"${dbName}日记本"中检索到的相关记忆片段 ---]\n`;
+                if (searchResults && searchResults.length > 0) {
+                    retrievedContent += searchResults.map(r => `* ${r.text.trim()}`).join('\n');
+                } else {
+                    retrievedContent += "没有找到直接相关的记忆片段。";
+                }
+                retrievedContent += `\n[--- 记忆片段结束 ---]\n`;
+                
+                processedSystemContent = processedSystemContent.replace(placeholder, retrievedContent);
+
+            } else {
+                console.log(`[RAGDiaryPlugin] 相关度低于阈值，将忽略《《${dbName}日记本》》。`);
+                processedSystemContent = processedSystemContent.replace(placeholder, '');
+            }
+        }
+
         const newMessages = messages.map(m =>
             m.role === 'system' ? { ...m, content: processedSystemContent } : m
         );
-
+ 
         return newMessages;
     }
     
