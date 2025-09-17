@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs').promises;
 const path = require('path');
+const PREPROCESSOR_ORDER_FILE = path.join(__dirname, '..', 'preprocessor_order.json');
 
 // 导入 reidentify_image 函数 (现在是 reidentify_media)
 const { reidentifyMediaByBase64Key } = require('../Plugin/ImageProcessor/reidentify_image');
@@ -1102,6 +1103,36 @@ module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurre
     // This section is now handled by the VCPTavern plugin's own registerRoutes method.
     // The conflicting routes have been removed from here to allow the plugin to manage them.
     // --- End VCPTavern API ---
+    
+    // --- 新增：预处理器顺序管理 API ---
+    adminApiRouter.get('/preprocessors/order', (req, res) => {
+        try {
+            const order = pluginManager.getPreprocessorOrder();
+            res.json({ status: 'success', order });
+        } catch (error) {
+            console.error('[AdminAPI] Error getting preprocessor order:', error);
+            res.status(500).json({ status: 'error', message: 'Failed to get preprocessor order.' });
+        }
+    });
+
+    adminApiRouter.post('/preprocessors/order', async (req, res) => {
+        const { order } = req.body;
+        if (!Array.isArray(order)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid request: "order" must be an array.' });
+        }
+
+        try {
+            await fs.writeFile(PREPROCESSOR_ORDER_FILE, JSON.stringify(order, null, 2), 'utf-8');
+            if (DEBUG_MODE) console.log('[AdminAPI] Saved new preprocessor order to file.');
+            
+            const newOrder = await pluginManager.hotReloadPluginsAndOrder();
+            res.json({ status: 'success', message: 'Order saved and hot-reloaded successfully.', newOrder });
+
+        } catch (error) {
+            console.error('[AdminAPI] Error saving or hot-reloading preprocessor order:', error);
+            res.status(500).json({ status: 'error', message: 'Failed to save or hot-reload preprocessor order.' });
+        }
+    });
     
     return adminApiRouter;
 };

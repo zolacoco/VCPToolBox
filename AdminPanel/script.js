@@ -62,7 +62,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sidebar Search
     const sidebarSearchInput = document.getElementById('sidebar-search');
 
-
     const API_BASE_URL = '/admin_api'; // Corrected API base path
     const MONITOR_API_BASE_URL = '/admin_api/system-monitor'; // New API base for monitoring, corrected path
 
@@ -968,6 +967,8 @@ Description Length: ${newDescription.length}`);
                if (iframe) {
                    iframe.src = iframe.src; // Force reload
                }
+           } else if (sectionIdToActivate === 'preprocessor-order-manager-section') {
+                initializePreprocessorOrderManager();
            }
         } else {
             console.warn(`[navigateTo] Target section with ID '${sectionIdToActivate}' not found.`);
@@ -1934,5 +1935,126 @@ Description Length: ${newDescription.length}`);
         }
     }
     // --- End Server Log Viewer Functions ---
+
+    // --- Preprocessor Order Manager Functions ---
+    async function initializePreprocessorOrderManager() {
+        const preprocessorListUl = document.getElementById('preprocessor-list');
+        const preprocessorOrderStatusSpan = document.getElementById('preprocessor-order-status');
+
+        if (!preprocessorListUl || !preprocessorOrderStatusSpan) {
+            console.error('Preprocessor manager elements not found in the DOM.');
+            return;
+        }
+        
+        console.log('Initializing Preprocessor Order Manager...');
+        preprocessorListUl.innerHTML = '<li>Loading...</li>';
+        preprocessorOrderStatusSpan.textContent = '';
+        try {
+            const data = await apiFetch(`${API_BASE_URL}/preprocessors/order`);
+            renderPreprocessorList(data.order, preprocessorListUl);
+        } catch (error) {
+            preprocessorListUl.innerHTML = `<li class="error-message">Failed to load preprocessor order: ${error.message}</li>`;
+            showMessage(`Failed to load preprocessor order: ${error.message}`, 'error');
+        }
+    }
+
+    function renderPreprocessorList(order, preprocessorListUl) {
+        preprocessorListUl.innerHTML = '';
+        if (order && order.length > 0) {
+            order.forEach(plugin => {
+                const li = document.createElement('li');
+                li.draggable = true;
+                li.dataset.pluginName = plugin.name;
+
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'plugin-info';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'plugin-name';
+                nameSpan.textContent = plugin.displayName;
+                infoDiv.appendChild(nameSpan);
+                
+                const descSpan = document.createElement('span');
+                descSpan.className = 'plugin-description';
+                descSpan.textContent = plugin.description;
+                infoDiv.appendChild(descSpan);
+
+                li.appendChild(infoDiv);
+
+                // Drag and Drop Event Listeners
+                li.addEventListener('dragstart', () => {
+                    setTimeout(() => li.classList.add('dragging'), 0);
+                });
+                li.addEventListener('dragend', () => {
+                    li.classList.remove('dragging');
+                });
+
+                preprocessorListUl.appendChild(li);
+            });
+        } else {
+            preprocessorListUl.innerHTML = '<li>No message preprocessor plugins found.</li>';
+        }
+    }
+    
+    // Moved event listeners to be attached once and checked for existence of elements
+    const preprocessorListContainer = document.getElementById('preprocessor-list');
+    if (preprocessorListContainer) {
+        preprocessorListContainer.addEventListener('dragover', e => {
+            e.preventDefault();
+            const afterElement = getDragAfterElement(preprocessorListContainer, e.clientY);
+            const dragging = document.querySelector('.dragging');
+            if (dragging) {
+                if (afterElement == null) {
+                    preprocessorListContainer.appendChild(dragging);
+                } else {
+                    preprocessorListContainer.insertBefore(dragging, afterElement);
+                }
+            }
+        });
+    }
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('li:not(.dragging)')];
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+    
+    const savePreprocessorOrderButton = document.getElementById('save-preprocessor-order-button');
+    if (savePreprocessorOrderButton) {
+        savePreprocessorOrderButton.addEventListener('click', async () => {
+            const preprocessorListUl = document.getElementById('preprocessor-list');
+            const preprocessorOrderStatusSpan = document.getElementById('preprocessor-order-status');
+            if (!preprocessorListUl || !preprocessorOrderStatusSpan) return;
+
+            const newOrder = [...preprocessorListUl.querySelectorAll('li')].map(li => li.dataset.pluginName);
+            preprocessorOrderStatusSpan.textContent = 'Saving...';
+            preprocessorOrderStatusSpan.className = 'status-message info';
+
+            try {
+                const response = await apiFetch(`${API_BASE_URL}/preprocessors/order`, {
+                    method: 'POST',
+                    body: JSON.stringify({ order: newOrder })
+                });
+                showMessage(response.message, 'success');
+                
+                // Reload the latest order from server to ensure UI reflects the saved state
+                const latestData = await apiFetch(`${API_BASE_URL}/preprocessors/order`);
+                preprocessorOrderStatusSpan.textContent = 'Order saved and reloaded!';
+                preprocessorOrderStatusSpan.className = 'status-message success';
+                renderPreprocessorList(latestData.order, preprocessorListUl);
+            } catch (error) {
+                preprocessorOrderStatusSpan.textContent = `Error: ${error.message}`;
+                preprocessorOrderStatusSpan.className = 'status-message error';
+                // showMessage is handled by apiFetch
+            }
+        });
+    }
 
 });
