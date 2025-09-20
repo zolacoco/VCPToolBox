@@ -17,6 +17,11 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000, debugMode
             }
             return response; // Success or non-retriable error
         } catch (error) {
+            // If the request was aborted, don't retry, just rethrow the error immediately.
+            if (error.name === 'AbortError') {
+                if (debugMode) console.log('[Fetch Retry] Request was aborted. No retries will be attempted.');
+                throw error;
+            }
             if (i === retries - 1) {
                 console.error(`[Fetch Retry] All retries failed. Last error: ${error.message}`);
                 throw error; // Rethrow the last error after all retries fail
