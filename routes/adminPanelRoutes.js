@@ -11,7 +11,7 @@ const manifestFileName = 'plugin-manifest.json';
 const blockedManifestExtension = '.block';
 const AGENT_FILES_DIR = path.join(__dirname, '..', 'Agent'); // 定义 Agent 文件目录
 
-module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurrentServerLogPath) {
+module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurrentServerLogPath, vectorDBManager) {
     const adminApiRouter = express.Router();
 
     // --- Admin API Router 内容 ---
@@ -1131,6 +1131,21 @@ module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurre
         } catch (error) {
             console.error('[AdminAPI] Error saving or hot-reloading preprocessor order:', error);
             res.status(500).json({ status: 'error', message: 'Failed to save or hot-reload preprocessor order.' });
+        }
+    });
+
+    // --- VectorDB Status API ---
+    adminApiRouter.get('/vectordb/status', (req, res) => {
+        if (vectorDBManager && typeof vectorDBManager.getHealthStatus === 'function') {
+            try {
+                const status = vectorDBManager.getHealthStatus();
+                res.json({ success: true, status });
+            } catch (error) {
+                console.error('[AdminAPI] Error getting VectorDB status:', error);
+                res.status(500).json({ success: false, error: 'Failed to get VectorDB status', details: error.message });
+            }
+        } else {
+            res.status(503).json({ success: false, error: 'VectorDBManager is not available.' });
         }
     });
     

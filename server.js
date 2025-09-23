@@ -629,7 +629,8 @@ const adminPanelRoutes = require('./routes/adminPanelRoutes')(
     DEBUG_MODE,
     dailyNoteRootPath,
     pluginManager,
-    logger.getServerLogPath // Pass the getter function
+    logger.getServerLogPath, // Pass the getter function
+    vectorDBManager // Pass the vectorDBManager instance
 );
 
 // --- End Admin API Router ---
