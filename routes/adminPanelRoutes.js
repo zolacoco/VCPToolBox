@@ -1099,6 +1099,53 @@ module.exports = function(DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurre
     });
     // --- End RAG Tags API ---
 
+    // --- Semantic Groups API ---
+    adminApiRouter.get('/semantic-groups', async (req, res) => {
+        const editFilePath = path.join(__dirname, '..', 'Plugin', 'RAGDiaryPlugin', 'semantic_groups.edit.json');
+        const mainFilePath = path.join(__dirname, '..', 'Plugin', 'RAGDiaryPlugin', 'semantic_groups.json');
+        
+        try {
+            // 优先读取 .edit.json 文件
+            const content = await fs.readFile(editFilePath, 'utf-8');
+            res.json(JSON.parse(content));
+        } catch (editError) {
+            if (editError.code === 'ENOENT') {
+                // 如果 .edit.json 不存在，则回退到读取主文件
+                try {
+                    const content = await fs.readFile(mainFilePath, 'utf-8');
+                    res.json(JSON.parse(content));
+                } catch (mainError) {
+                    console.error('[AdminPanelRoutes API] Error reading main semantic_groups.json as fallback:', mainError);
+                     if (mainError.code === 'ENOENT') {
+                        res.json({ config: {}, groups: {} }); // 两个文件都不存在
+                    } else {
+                        res.status(500).json({ error: 'Failed to read semantic_groups.json', details: mainError.message });
+                    }
+                }
+            } else {
+                console.error('[AdminPanelRoutes API] Error reading semantic_groups.edit.json:', editError);
+                res.status(500).json({ error: 'Failed to read semantic_groups.edit.json', details: editError.message });
+            }
+        }
+    });
+
+    adminApiRouter.post('/semantic-groups', async (req, res) => {
+        const editFilePath = path.join(__dirname, '..', 'Plugin', 'RAGDiaryPlugin', 'semantic_groups.edit.json');
+        const data = req.body;
+        if (typeof data !== 'object' || data === null) {
+             return res.status(400).json({ error: 'Invalid request body. Expected a JSON object.' });
+        }
+        try {
+            // 直接写入 .edit.json 文件，不再调用插件的复杂逻辑
+            await fs.writeFile(editFilePath, JSON.stringify(data, null, 2), 'utf-8');
+            res.json({ message: '编辑配置已保存。更改将在下次服务器重启后生效。' });
+        } catch (error) {
+            console.error('[AdminPanelRoutes API] Error writing semantic_groups.edit.json:', error);
+            res.status(500).json({ error: 'Failed to write semantic_groups.edit.json', details: error.message });
+        }
+    });
+    // --- End Semantic Groups API ---
+
     // --- VCPTavern API ---
     // This section is now handled by the VCPTavern plugin's own registerRoutes method.
     // The conflicting routes have been removed from here to allow the plugin to manage them.

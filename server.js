@@ -149,9 +149,10 @@ const cachedEmojiLists = new Map();
 
 // Authentication middleware for Admin Panel and Admin API
 const adminAuth = (req, res, next) => {
-    const isAdminPath = req.path.startsWith('/AdminPanel') || req.path.startsWith('/admin_api');
+    // This middleware now ONLY protects the API endpoint. Static files are served before this.
+    const isAdminApiPath = req.path.startsWith('/admin_api');
 
-    if (isAdminPath) {
+    if (isAdminApiPath) {
         // Check if admin credentials are configured
         if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
             console.error('[AdminAuth] AdminUsername or AdminPassword not set in config.env. Admin panel is disabled.');
@@ -182,10 +183,10 @@ const adminAuth = (req, res, next) => {
     // Not an admin path, proceed
     return next();
 };
-app.use(adminAuth); // Apply admin authentication globally (it will only act on /AdminPanel and /admin_api paths)
-
-// Serve Admin Panel static files (will only be reached if adminAuth passes for /AdminPanel paths)
+// Serve Admin Panel static files FIRST, before any authentication.
 app.use('/AdminPanel', express.static(path.join(__dirname, 'AdminPanel')));
+
+app.use(adminAuth); // Apply admin authentication to subsequent routes, primarily /admin_api.
 
 
 // Image server logic is now handled by the ImageServer plugin.
