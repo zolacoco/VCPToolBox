@@ -49,7 +49,7 @@ class TimeExpressionParser {
     
     // 核心解析函数 - V2 (支持多表达式)
     parse(text) {
-        console.log(`[TimeParser] Parsing text for all time expressions: "${text}"`);
+        console.log(`[TimeParser] Parsing text for all time expressions: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
         const now = this._getBeijingTime(new Date());
         let remainingText = text;
         const results = [];
@@ -561,6 +561,12 @@ class RAGDiaryPlugin {
         // --- 处理 [[...]] RAG 片段检索 ---
         const dynamicK = this._calculateDynamicK(userContent, aiContent);
 
+        // V2.3 修复 & 优化: 在循环外仅解析一次时间表达式
+        const timeRanges = this.timeParser.parse(userContent);
+        if (timeRanges.length > 0) {
+            console.log(`[RAGDiaryPlugin] 识别到 ${timeRanges.length} 个时间范围，将为所有带::Time标记的日记本启用时间感知模式。`);
+        }
+
         for (const match of ragDeclarations) {
             const placeholder = match[0];
             const dbName = match[1];
@@ -601,10 +607,8 @@ class RAGDiaryPlugin {
             // --- 步骤2: (可选) 时间感知检索 ---
             if (useTime) {
                 console.log(`[RAGDiaryPlugin] 模式: 时间感知 for ${displayName}`);
-                const timeRanges = this.timeParser.parse(userContent);
-
+                
                 if (timeRanges && timeRanges.length > 0) {
-                    console.log(`[RAGDiaryPlugin] 识别到 ${timeRanges.length} 个时间范围，开始合并处理...`);
                     const allEntries = new Map();
                     for (const timeRange of timeRanges) {
                         // 使用可能被增强过的 finalQueryVector
