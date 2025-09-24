@@ -483,20 +483,25 @@ class RAGDiaryPlugin {
 
     // processMessages 是 messagePreprocessor 的标准接口
     async processMessages(messages, pluginConfig) {
-        const systemMessage = messages.find(m => m.role === 'system');
-        if (!systemMessage || typeof systemMessage.content !== 'string') {
+        // V2.4 修复: 精准定位包含占位符的system消息，避免在多system消息时污染其他消息
+        const targetSystemMessageIndex = messages.findIndex(m =>
+            m.role === 'system' &&
+            typeof m.content === 'string' &&
+            /\[\[.*日记本.*\]\]|<<.*日记本.*>>|《《.*日记本.*》》/.test(m.content)
+        );
+
+        // 如果没有找到任何包含RAG占位符的system消息，则直接返回，不做任何处理
+        if (targetSystemMessageIndex === -1) {
             return messages;
         }
 
+        const systemMessage = messages[targetSystemMessageIndex];
+
         // 更新正则表达式以捕获 ::Time 标记
-        const groupAwareRegex = /\[\[(.*?)日记本(.*?)\]\]/g; // V2.1: More flexible regex for multiple flags
+        const groupAwareRegex = /\[\[(.*?)日记本(.*?)\]\]/g; // V2.1: More flexible regex
         const ragDeclarations = [...systemMessage.content.matchAll(groupAwareRegex)];
         const fullTextDeclarations = [...systemMessage.content.matchAll(/<<(.*?)日记本>>/g)];
         const hybridDeclarations = [...systemMessage.content.matchAll(/《《(.*?)日记本(.*?)》》/g)]; // V2.1: More flexible regex
-
-        if (ragDeclarations.length === 0 && fullTextDeclarations.length === 0 && hybridDeclarations.length === 0) {
-            return messages; // 没有发现RAG声明，直接返回
-        }
         
         // --- [最终修复] 统一准备 userContent 和 aiContent ---
         const lastUserMessageIndex = messages.findLastIndex(m => m.role === 'user');
@@ -758,28 +763,12 @@ class RAGDiaryPlugin {
             }
         }
 
-        // --- [最终修复] 精准替换，而不是覆盖所有 system 消息 ---
-        const newMessages = JSON.parse(JSON.stringify(messages)); // 创建一个深拷贝以安全修改
+        // --- V2.4 修复: 创建消息数组的深拷贝，并直接使用之前找到的索引进行精准更新 ---
+        const newMessages = JSON.parse(JSON.stringify(messages));
+        newMessages[targetSystemMessageIndex].content = processedSystemContent;
 
-        // 找到那个真正包含RAG占位符的system消息的索引
-        const targetSystemMessageIndex = newMessages.findIndex(m =>
-            m.role === 'system' && /\[\[.*日记本.*\]\]|<<.*日记本.*>>|《《.*日记本.*》》/.test(m.content)
-        );
-
-        if (targetSystemMessageIndex !== -1) {
-            // 只更新找到的那个system消息
-            newMessages[targetSystemMessageIndex].content = processedSystemContent;
-            if (process.env.DebugMode === 'true') {
-                 console.log(`[RAGDiaryPlugin] 已精准更新索引为 ${targetSystemMessageIndex} 的 system 消息。`);
-            }
-        } else {
-            // 如果由于某种原因（例如VCPTavern移除了占位符），我们找不到原始消息，
-            // 至少要确保替换占位符后的内容能被应用。
-            // 这种情况下，我们退回到更新第一个system消息。
-            const firstSystemIndex = newMessages.findIndex(m => m.role === 'system');
-            if (firstSystemIndex !== -1) {
-                newMessages[firstSystemIndex].content = processedSystemContent;
-            }
+        if (process.env.DebugMode === 'true') {
+            console.log(`[RAGDiaryPlugin] 已精准更新索引为 ${targetSystemMessageIndex} 的 system 消息。`);
         }
  
         return newMessages;
