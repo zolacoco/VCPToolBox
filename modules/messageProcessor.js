@@ -188,45 +188,6 @@ async function replaceOtherVariables(text, model, role, context) {
         } else if (processedText && typeof processedText === 'string' && processedText.includes('{{Image_Key}}')) {
             if (DEBUG_MODE) console.warn('[replaceOtherVariables] {{Image_Key}} placeholder found in text, but ImageServer plugin or its Image_Key is not resolved. Placeholder will not be replaced.');
         }
-        const emojiPlaceholderRegex = /\{\{(.+?表情包)\}\}/g;
-        let emojiMatch;
-        while ((emojiMatch = emojiPlaceholderRegex.exec(processedText)) !== null) {
-            const placeholder = emojiMatch[0];
-            const emojiName = emojiMatch[1];
-            const emojiList = cachedEmojiLists.get(emojiName);
-            processedText = processedText.replaceAll(placeholder, emojiList || `${emojiName}列表不可用`);
-        }
-        const diaryPlaceholderRegex = /\{\{(.+?)日记本\}\}/g;
-        let tempProcessedText = processedText;
-
-        let allDiariesData = {};
-        const allDiariesDataString = pluginManager.getPlaceholderValue("{{AllCharacterDiariesData}}");
-
-        if (allDiariesDataString && !allDiariesDataString.startsWith("[Placeholder")) {
-            try {
-                allDiariesData = JSON.parse(allDiariesDataString);
-            } catch (e) {
-                console.error(`[replaceOtherVariables] Failed to parse AllCharacterDiariesData JSON: ${e.message}. Data: ${allDiariesDataString.substring(0,100)}...`);
-            }
-        } else if (allDiariesDataString && allDiariesDataString.startsWith("[Placeholder")) {
-             if (DEBUG_MODE) console.warn(`[replaceOtherVariables] Placeholder {{AllCharacterDiariesData}} not found or not yet populated by DailyNoteGet plugin. Value: ${allDiariesDataString}`);
-        }
-
-        let match;
-        while ((match = diaryPlaceholderRegex.exec(tempProcessedText)) !== null) {
-            const placeholder = match[0];
-            const characterName = match[1];
-            
-            let diaryContent = `[${characterName}日记本内容为空或未从插件获取]`;
-
-            if (allDiariesData.hasOwnProperty(characterName)) {
-                diaryContent = allDiariesData[characterName];
-            }
-            
-            tempProcessedText = tempProcessedText.replaceAll(placeholder, diaryContent);
-            diaryPlaceholderRegex.lastIndex = 0;
-        }
-        processedText = tempProcessedText;
         for (const rule of detectors) {
             if (typeof rule.detector === 'string' && rule.detector.length > 0 && typeof rule.output === 'string') {
                 processedText = processedText.replaceAll(rule.detector, rule.output);
@@ -283,7 +244,60 @@ async function replaceOtherVariables(text, model, role, context) {
     return processedText;
 }
 
+async function replacePriorityVariables(text, context, role) {
+    const { pluginManager, cachedEmojiLists, DEBUG_MODE } = context;
+    if (text == null) return '';
+    let processedText = String(text);
+
+    // 只在 system role 中处理
+    if (role !== 'system') {
+        return processedText;
+    }
+
+    // --- 表情包处理 ---
+    const emojiPlaceholderRegex = /\{\{(.+?表情包)\}\}/g;
+    let emojiMatch;
+    while ((emojiMatch = emojiPlaceholderRegex.exec(processedText)) !== null) {
+        const placeholder = emojiMatch[0];
+        const emojiName = emojiMatch[1];
+        const emojiList = cachedEmojiLists.get(emojiName);
+        processedText = processedText.replaceAll(placeholder, emojiList || `[${emojiName}列表不可用]`);
+    }
+
+    // --- 日记本处理 ---
+    const diaryPlaceholderRegex = /\{\{(.+?)日记本\}\}/g;
+    let tempProcessedText = processedText;
+    let allDiariesData = {};
+    const allDiariesDataString = pluginManager.getPlaceholderValue("{{AllCharacterDiariesData}}");
+
+    if (allDiariesDataString && !allDiariesDataString.startsWith("[Placeholder")) {
+        try {
+            allDiariesData = JSON.parse(allDiariesDataString);
+        } catch (e) {
+            console.error(`[replacePriorityVariables] Failed to parse AllCharacterDiariesData JSON: ${e.message}. Data: ${allDiariesDataString.substring(0, 100)}...`);
+        }
+    } else if (allDiariesDataString && allDiariesDataString.startsWith("[Placeholder")) {
+        if (DEBUG_MODE) console.warn(`[replacePriorityVariables] Placeholder {{AllCharacterDiariesData}} not found or not yet populated. Value: ${allDiariesDataString}`);
+    }
+
+    let match;
+    while ((match = diaryPlaceholderRegex.exec(tempProcessedText)) !== null) {
+        const placeholder = match[0];
+        const characterName = match[1];
+        let diaryContent = `[${characterName}日记本内容为空或未从插件获取]`;
+        if (allDiariesData.hasOwnProperty(characterName)) {
+            diaryContent = allDiariesData[characterName];
+        }
+        tempProcessedText = tempProcessedText.replaceAll(placeholder, diaryContent);
+        diaryPlaceholderRegex.lastIndex = 0;
+    }
+    processedText = tempProcessedText;
+
+    return processedText;
+}
+
 module.exports = {
     replaceAgentVariables,
-    replaceOtherVariables
+    replaceOtherVariables,
+    replacePriorityVariables
 };

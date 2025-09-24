@@ -493,78 +493,59 @@ class VectorDBManager {
             return cached;
         }
 
-        console.log(`[VectorDB][Search] Received search request for "${diaryName}".`);
+        console.log(`[VectorDB][Search] Received async search request for "${diaryName}".`);
         await this.trackUsage(diaryName);
-        const isLoaded = await this.loadIndexForSearch(diaryName, queryVector.length);
-        if (!isLoaded) {
-            console.error(`[VectorDB][Search] Index for "${diaryName}" could not be loaded.`);
-            return [];
-        }
-        
-        const index = this.indices.get(diaryName);
-        const chunkMap = this.chunkMaps.get(diaryName);
-        if (!index || !chunkMap) {
-            console.error(`[VectorDB][Search] Index or chunkMap for "${diaryName}" not found in memory.`);
-            return [];
-        }
-        
-        try {
-            // 验证索引状态
-            let maxElements, currentCount;
-            try {
-                maxElements = index.getMaxElements();
-                currentCount = index.getCurrentCount();
-                console.log(`[VectorDB][Search] Index stats for "${diaryName}": max=${maxElements}, current=${currentCount}`);
-                
-                if (currentCount === 0) {
-                    console.warn(`[VectorDB][Search] Index for "${diaryName}" is empty. Returning empty results.`);
-                    return [];
-                }
-            } catch (statsError) {
-                console.warn(`[VectorDB][Search] Could not get index stats for "${diaryName}":`, statsError.message);
-                // 继续执行
-            }
-            
-            // 验证查询向量
-            if (!Array.isArray(queryVector) || queryVector.length === 0) {
-                console.error(`[VectorDB][Search] Invalid query vector for "${diaryName}":`, typeof queryVector, queryVector?.length);
-                return [];
-            }
-            
-            // 设置搜索参数
-            try {
-                if (typeof index.setEf === 'function') {
-                    index.setEf(this.config.efSearch);
-                }
-            } catch (efError) {
-                console.warn(`[VectorDB][Search] Could not set ef parameter for "${diaryName}":`, efError.message);
-            }
-            
-            console.log(`[VectorDB][Search] Performing k-NN search for "${diaryName}" with k=${k}, dimensions=${queryVector.length}`);
-            const result = index.searchKnn(queryVector, k);
-            
-            if (!result || !result.neighbors) {
-                console.warn(`[VectorDB][Search] Search returned invalid result for "${diaryName}":`, result);
-                return [];
-            }
-            
-            console.log(`[VectorDB][Search] Raw search result for "${diaryName}":`, result.neighbors);
-            const searchResults = result.neighbors.map(label => chunkMap[label]).filter(Boolean);
 
-            this.searchCache.set(diaryName, queryVector, k, searchResults);
-            this.recordMetric('search_success', performance.now() - startTime);
-            console.log(`[VectorDB][Search] Found ${searchResults.length} matching chunks for "${diaryName}".`);
-            return searchResults;
+        // 确保索引文件存在，但不在这里加载它，工作线程将自己加载
+        const safeFileNameBase = Buffer.from(diaryName, 'utf-8').toString('base64url');
+        const indexPath = path.join(VECTOR_STORE_PATH, `${safeFileNameBase}.bin`);
+        try {
+            await fs.access(indexPath);
         } catch (error) {
-            // 改进错误日志记录，确保错误信息被正确显示
-            console.error(`[VectorDB][Search] An error occurred during k-NN search for "${diaryName}":`, {
-                message: error.message,
-                stack: error.stack,
-                name: error.name,
-                code: error.code
-            });
+            console.error(`[VectorDB][Search] Index file for "${diaryName}" does not exist. Cannot start search worker.`);
             return [];
         }
+
+        return new Promise((resolve, reject) => {
+            console.log(`[VectorDB][Search] Creating search worker for "${diaryName}".`);
+            const worker = new Worker(path.resolve(__dirname, 'vectorSearchWorker.js'), {
+                workerData: {
+                    diaryName,
+                    queryVector,
+                    k,
+                    efSearch: this.config.efSearch,
+                    vectorStorePath: VECTOR_STORE_PATH,
+                }
+            });
+
+            worker.on('message', (message) => {
+                console.log(`[VectorDB][Search] Received message from worker for "${diaryName}". Status: ${message.status}`);
+                if (message.status === 'success') {
+                    const searchResults = message.results;
+                    this.searchCache.set(diaryName, queryVector, k, searchResults);
+                    this.recordMetric('search_success', performance.now() - startTime);
+                    console.log(`[VectorDB][Search] Worker found ${searchResults.length} matching chunks for "${diaryName}". Resolving promise.`);
+                    resolve(searchResults);
+                } else {
+                    console.error(`[VectorDB][Search] Worker returned an error for "${diaryName}":`, message.error);
+                    console.log(`[VectorDB][Search] Resolving promise with empty array due to worker error.`);
+                    resolve([]);
+                }
+            });
+
+            worker.on('error', (error) => {
+                console.error(`[VectorDB][Search] Worker for "${diaryName}" encountered a critical error:`, error);
+                console.log(`[VectorDB][Search] Resolving promise with empty array due to critical worker error.`);
+                resolve([]);
+            });
+
+            worker.on('exit', (code) => {
+                console.log(`[VectorDB][Search] Worker for "${diaryName}" exited with code ${code}.`);
+                if (code !== 0) {
+                    console.error(`[VectorDB][Search] Worker for "${diaryName}" stopped with a non-zero exit code.`);
+                }
+            });
+        });
     }
 
     async manageMemory() {

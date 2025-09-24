@@ -110,7 +110,19 @@ class ChatCompletionHandler {
                 }
             }
 
-            let agentExpandedMessages = await Promise.all(originalBody.messages.map(async (msg) => {
+            // --- VCPTavern 优先处理 ---
+            // 在任何变量替换之前，首先运行 VCPTavern 来注入预设内容
+            let tavernProcessedMessages = originalBody.messages;
+            if (pluginManager.messagePreprocessors.has("VCPTavern")) {
+                if (DEBUG_MODE) console.log(`[Server] Calling priority message preprocessor: VCPTavern`);
+                try {
+                    tavernProcessedMessages = await pluginManager.executeMessagePreprocessor("VCPTavern", originalBody.messages);
+                } catch (pluginError) {
+                    console.error(`[Server] Error in priority preprocessor VCPTavern:`, pluginError);
+                }
+            }
+
+            let agentExpandedMessages = await Promise.all(tavernProcessedMessages.map(async (msg) => {
                 const newMessage = JSON.parse(JSON.stringify(msg));
                 if (newMessage.content && typeof newMessage.content === 'string') {
                     newMessage.content = await messageProcessor.replaceAgentVariables(newMessage.content, originalBody.model, msg.role);
@@ -129,6 +141,33 @@ class ChatCompletionHandler {
             if (DEBUG_MODE) await writeDebugLog('LogAfterAgentExpansion', agentExpandedMessages);
 
             let processedMessages = agentExpandedMessages;
+
+            // --- 优先处理日记本和表情包占位符 ---
+            const priorityContext = {
+                pluginManager,
+                cachedEmojiLists: this.config.cachedEmojiLists,
+                DEBUG_MODE
+            };
+            processedMessages = await Promise.all(processedMessages.map(async (msg) => {
+                const newMessage = JSON.parse(JSON.stringify(msg));
+                if (newMessage.content && typeof newMessage.content === 'string') {
+                    newMessage.content = await messageProcessor.replacePriorityVariables(newMessage.content, priorityContext, msg.role);
+                } else if (Array.isArray(newMessage.content)) {
+                    newMessage.content = await Promise.all(newMessage.content.map(async (part) => {
+                        if (part.type === 'text' && typeof part.text === 'string') {
+                            const newPart = JSON.parse(JSON.stringify(part));
+                            newPart.text = await messageProcessor.replacePriorityVariables(newPart.text, priorityContext, msg.role);
+                            return newPart;
+                        }
+                        return part;
+                    }));
+                }
+                return newMessage;
+            }));
+            if (DEBUG_MODE) await writeDebugLog('LogAfterPriorityProcessing', processedMessages);
+
+
+            // --- 媒体处理器 ---
             if (shouldProcessMedia) {
                 const processorName = pluginManager.messagePreprocessors.has("MultiModalProcessor") ? "MultiModalProcessor" : "ImageProcessor";
                 if (pluginManager.messagePreprocessors.has(processorName)) {
@@ -141,10 +180,14 @@ class ChatCompletionHandler {
                 }
             }
 
+            // --- 其他通用消息预处理器 ---
             for (const name of pluginManager.messagePreprocessors.keys()) {
-                if (name === "ImageProcessor" || name === "MultiModalProcessor") continue;
+                // 跳过已经特殊处理的插件
+                if (name === "ImageProcessor" || name === "MultiModalProcessor" || name === "VCPTavern") continue;
+                
                 if (DEBUG_MODE) console.log(`[Server] Calling message preprocessor: ${name}`);
                 try {
+                    // 注意：这里应该使用 processedMessages，而不是 agentExpandedMessages
                     processedMessages = await pluginManager.executeMessagePreprocessor(name, processedMessages);
                 } catch (pluginError) {
                     console.error(`[Server] Error in preprocessor ${name}:`, pluginError);
