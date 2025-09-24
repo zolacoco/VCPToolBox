@@ -429,9 +429,29 @@ class RAGDiaryPlugin {
             }
         }
 
-        const newMessages = messages.map(m =>
-            m.role === 'system' ? { ...m, content: processedSystemContent } : m
+        // --- [最终修复] 精准替换，而不是覆盖所有 system 消息 ---
+        const newMessages = JSON.parse(JSON.stringify(messages)); // 创建一个深拷贝以安全修改
+
+        // 找到那个真正包含RAG占位符的system消息的索引
+        const targetSystemMessageIndex = newMessages.findIndex(m =>
+            m.role === 'system' && /\[\[.*日记本.*\]\]|<<.*日记本.*>>|《《.*日记本.*》》/.test(m.content)
         );
+
+        if (targetSystemMessageIndex !== -1) {
+            // 只更新找到的那个system消息
+            newMessages[targetSystemMessageIndex].content = processedSystemContent;
+            if (process.env.DebugMode === 'true') {
+                 console.log(`[RAGDiaryPlugin] 已精准更新索引为 ${targetSystemMessageIndex} 的 system 消息。`);
+            }
+        } else {
+            // 如果由于某种原因（例如VCPTavern移除了占位符），我们找不到原始消息，
+            // 至少要确保替换占位符后的内容能被应用。
+            // 这种情况下，我们退回到更新第一个system消息。
+            const firstSystemIndex = newMessages.findIndex(m => m.role === 'system');
+            if (firstSystemIndex !== -1) {
+                newMessages[firstSystemIndex].content = processedSystemContent;
+            }
+        }
  
         return newMessages;
     }
