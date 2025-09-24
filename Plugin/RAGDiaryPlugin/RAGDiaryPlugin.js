@@ -5,6 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto'); // <--- 引入加密模块
 const TIME_EXPRESSIONS = require('./timeExpressions.config.js');
+const SemanticGroupManager = require('./SemanticGroupManager.js');
 
 // 从 DailyNoteGet 插件借鉴的常量和路径逻辑
 const projectBasePath = process.env.PROJECT_BASE_PATH;
@@ -273,6 +274,7 @@ class RAGDiaryPlugin {
         this.ragConfig = {};
         this.enhancedVectorCache = {}; // <--- 新增：用于存储增强向量的缓存
         this.timeParser = new TimeExpressionParser('zh-CN'); // 实例化时间解析器
+        this.semanticGroups = new SemanticGroupManager(this); // 实例化语义组管理器
         this.loadConfig();
     }
 
@@ -487,10 +489,10 @@ class RAGDiaryPlugin {
         }
 
         // 更新正则表达式以捕获 ::Time 标记
-        const timeAwareRegex = /\[\[(.*?)日记本(?::(\d+\.?\d*))?(::Time)?\]\]/g;
-        const ragDeclarations = [...systemMessage.content.matchAll(timeAwareRegex)];
+        const groupAwareRegex = /\[\[(.*?)日记本(.*?)\]\]/g; // V2.1: More flexible regex for multiple flags
+        const ragDeclarations = [...systemMessage.content.matchAll(groupAwareRegex)];
         const fullTextDeclarations = [...systemMessage.content.matchAll(/<<(.*?)日记本>>/g)];
-        const hybridDeclarations = [...systemMessage.content.matchAll(/《《(.*?)日记本(?::(\d+\.?\d*))?》》/g)];
+        const hybridDeclarations = [...systemMessage.content.matchAll(/《《(.*?)日记本(.*?)》》/g)]; // V2.1: More flexible regex
 
         if (ragDeclarations.length === 0 && fullTextDeclarations.length === 0 && hybridDeclarations.length === 0) {
             return messages; // 没有发现RAG声明，直接返回
@@ -562,48 +564,87 @@ class RAGDiaryPlugin {
         for (const match of ragDeclarations) {
             const placeholder = match[0];
             const dbName = match[1];
-            const kMultiplier = match[2] ? parseFloat(match[2]) : 1.0;
+            const modifiers = match[2] || ''; // e.g., ":1.5::Time::Group"
+            
+            // --- 解析修饰符 ---
+            const kMultiplierMatch = modifiers.match(/:(\d+\.?\d*)/);
+            const kMultiplier = kMultiplierMatch ? parseFloat(kMultiplierMatch[1]) : 1.0;
+            const useTime = modifiers.includes('::Time');
+            const useGroup = modifiers.includes('::Group');
+
             const displayName = dbName + '日记本';
-            const hasTimeFlag = match[3] === '::Time'; // 直接通过捕获组判断
             const finalK = Math.max(1, Math.round(dynamicK * kMultiplier));
-
             let retrievedContent = '';
+            let finalQueryVector = queryVector;
+            let activatedGroups = null; // 用于存储激活的语义组信息
 
-            if (hasTimeFlag) {
-                console.log(`[RAGDiaryPlugin] 检测到时间感知模式 for ${displayName}`);
-                const timeRanges = this.timeParser.parse(userContent); // 现在返回的是数组
+            console.log(`[RAGDiaryPlugin] Processing "${displayName}" with modifiers: "${modifiers}" -> kMultiplier: ${kMultiplier}, useTime: ${useTime}, useGroup: ${useGroup}`);
+
+            // --- 步骤1: (可选) 语义组增强 ---
+            if (useGroup) {
+                console.log(`[RAGDiaryPlugin] 模式: 语义组增强 for ${displayName}`);
+                activatedGroups = this.semanticGroups.detectAndActivateGroups(userContent);
+                
+                if (activatedGroups.size > 0) {
+                    const enhancedVector = await this.semanticGroups.getEnhancedVector(queryText, activatedGroups);
+                    if (enhancedVector) {
+                        finalQueryVector = enhancedVector;
+                        console.log(`[RAGDiaryPlugin] 语义组向量增强成功。`);
+                    } else {
+                         console.log(`[RAGDiaryPlugin] 语义组向量增强失败，回退到原始查询向量。`);
+                    }
+                } else {
+                    console.log(`[RAGDiaryPlugin] 未激活任何语义组，使用原始查询向量。`);
+                }
+            }
+
+            // --- 步骤2: (可选) 时间感知检索 ---
+            if (useTime) {
+                console.log(`[RAGDiaryPlugin] 模式: 时间感知 for ${displayName}`);
+                const timeRanges = this.timeParser.parse(userContent);
 
                 if (timeRanges && timeRanges.length > 0) {
-                    console.log(`[RAGDiaryPlugin] 识别到 ${timeRanges.length} 个独立时间范围，将进行合并去重处理...`);
-                    
-                    const allEntries = new Map(); // 使用Map来根据内容去重
+                    console.log(`[RAGDiaryPlugin] 识别到 ${timeRanges.length} 个时间范围，开始合并处理...`);
+                    const allEntries = new Map();
                     for (const timeRange of timeRanges) {
-                        console.log(`[RAGDiaryPlugin] -- 处理时间范围: ${timeRange.start.toISOString()} 至 ${timeRange.end.toISOString()}`);
-                        const resultsData = await this.processWithTimeFilter(dbName, queryVector, timeRange, finalK);
+                        // 使用可能被增强过的 finalQueryVector
+                        const resultsData = await this.processWithTimeFilter(dbName, finalQueryVector, timeRange, finalK);
                         resultsData.results.forEach(entry => {
                             const key = entry.text.trim();
                             if (!allEntries.has(key)) {
-                                allEntries.set(key, entry); // 键是日记内容，值是完整的条目对象
+                                allEntries.set(key, entry);
                             }
                         });
                     }
-
                     const uniqueResults = Array.from(allEntries.values());
                     retrievedContent = this.formatCombinedTimeAwareResults(uniqueResults, timeRanges, dbName);
-
                 } else {
-                    console.log(`[RAGDiaryPlugin] 未识别到时间表达式，回退到普通RAG模式`);
-                    const searchResults = await this.vectorDBManager.search(dbName, queryVector, finalK);
+                    console.log(`[RAGDiaryPlugin] 时间模式已指定但未识别到时间表达式，回退到普通RAG模式 (可能已应用语义组增强)`);
+                    const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
+                    // 如果Group模式也激活了，使用Group的格式化函数
+                    if (useGroup) {
+                        retrievedContent = this.formatGroupRAGResults(searchResults, displayName, activatedGroups);
+                    } else {
+                        retrievedContent = this.formatStandardResults(searchResults, displayName);
+                    }
+                }
+            }
+            // --- 步骤3: 普通或仅语义组增强的检索 ---
+            else {
+                if (useGroup) {
+                    // 仅 Group 模式
+                    console.log(`[RAGDiaryPlugin] 正在为 "${displayName}" 执行纯语义组增强检索...`);
+                    const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
+                    retrievedContent = this.formatGroupRAGResults(searchResults, displayName, activatedGroups);
+                } else {
+                    // --- 普通 RAG 逻辑 ---
+                    console.log(`[RAGDiaryPlugin] 正在为 "${displayName}" 执行标准检索 (数据库键: ${dbName})...`);
+                    if (kMultiplier !== 1.0) {
+                        console.log(`[RAGDiaryPlugin] 应用K值乘数: ${kMultiplier}. (基础K: ${dynamicK} -> 最终K: ${finalK})`);
+                    }
+                    const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
                     retrievedContent = this.formatStandardResults(searchResults, displayName);
                 }
-            } else {
-                // --- 普通 RAG 逻辑 ---
-                console.log(`[RAGDiaryPlugin] 正在为 "${displayName}" 检索相关信息 (数据库键: ${dbName})...`);
-                if (kMultiplier !== 1.0) {
-                    console.log(`[RAGDiaryPlugin] 应用K值乘数: ${kMultiplier}. (基础K: ${dynamicK} -> 最终K: ${finalK})`);
-                }
-                const searchResults = await this.vectorDBManager.search(dbName, queryVector, finalK);
-                retrievedContent = this.formatStandardResults(searchResults, displayName);
             }
             
             processedSystemContent = processedSystemContent.replace(placeholder, retrievedContent);
@@ -659,7 +700,9 @@ class RAGDiaryPlugin {
         for (const match of hybridDeclarations) {
             const placeholder = match[0];      // 例如 《《小克日记本:1.5》》
             const dbName = match[1];           // 例如 "小克"
-            const kMultiplier = match[2] ? parseFloat(match[2]) : 1.0; // 获取K值乘数
+            const modifiers = match[2] || '';
+            const kMultiplierMatch = modifiers.match(/:(\d+\.?\d*)/);
+            const kMultiplier = kMultiplierMatch ? parseFloat(kMultiplierMatch[1]) : 1.0;
 
             const diaryConfig = this.ragConfig[dbName] || {};
             const localThreshold = diaryConfig.threshold || GLOBAL_SIMILARITY_THRESHOLD;
@@ -929,6 +972,30 @@ class RAGDiaryPlugin {
         }
     
         content += `[--- 检索结束 ---]\n`;
+        return content;
+    }
+
+    formatGroupRAGResults(searchResults, displayName, activatedGroups) {
+        let content = `\n[--- "${displayName}" 语义组增强检索结果 ---]\n`;
+        
+        if (activatedGroups && activatedGroups.size > 0) {
+            content += `[激活的语义组:]\n`;
+            for (const [groupName, data] of activatedGroups) {
+                content += `  • ${groupName} (${(data.strength * 100).toFixed(0)}%激活): 匹配到 "${data.matchedWords.join(', ')}"\n`;
+            }
+            content += '\n';
+        } else {
+            content += `[未激活特定语义组]\n\n`;
+        }
+        
+        content += `[检索到 ${searchResults ? searchResults.length : 0} 条相关记忆]\n`;
+        if (searchResults && searchResults.length > 0) {
+            content += searchResults.map(r => `* ${r.text.trim()}`).join('\n');
+        } else {
+            content += "没有找到直接相关的记忆片段。";
+        }
+        content += `\n[--- 检索结束 ---]\n`;
+        
         return content;
     }
 
