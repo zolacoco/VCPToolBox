@@ -414,6 +414,30 @@ class RAGDiaryPlugin {
         return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
+    _getWeightedAverageVector(vectors, weights) {
+        const [vecA, vecB] = vectors;
+        const [weightA, weightB] = weights;
+
+        if (!vecA && !vecB) return null;
+        // If one vector is missing, return the other one, effectively not averaging.
+        if (vecA && !vecB) return vecA;
+        if (!vecA && vecB) return vecB;
+
+        if (vecA.length !== vecB.length) {
+            console.error('[RAGDiaryPlugin] Vector dimensions do not match for weighted average.');
+            return null;
+        }
+
+        const dimension = vecA.length;
+        const result = new Array(dimension);
+
+        for (let i = 0; i < dimension; i++) {
+            result[i] = (vecA[i] * weightA) + (vecB[i] * weightB);
+        }
+        
+        return result;
+    }
+
     async getDiaryContent(characterName) {
         const characterDirPath = path.join(dailyNoteRootPath, characterName);
         let characterDiaryContent = `[${characterName}日记本内容为空]`;
@@ -529,30 +553,36 @@ class RAGDiaryPlugin {
             }
         }
 
-        // --- V2.0 优化：基于准备好的上下文构建查询 ---
-        let queryText = userContent;
+        // --- V2.5 优化: 独立向量化与加权平均 ---
+        let userVector = null;
+        let aiVector = null;
+
+        if (userContent) {
+            console.log(`[RAGDiaryPlugin] Vectorizing user query: "${userContent.substring(0, 100)}..."`);
+            userVector = await this.getSingleEmbedding(userContent);
+        }
+
         if (aiContent) {
-            queryText = `${aiContent}\n${userContent}`;
-            console.log('[RAGDiaryPlugin] Found and spliced the latest AI message for query vectorization.');
-        } else {
-            console.log('[RAGDiaryPlugin] No preceding AI message found in history. Using user message only for query vectorization.');
+            console.log(`[RAGDiaryPlugin] Vectorizing AI context: "${aiContent.substring(0, 100)}..."`);
+            aiVector = await this.getSingleEmbedding(aiContent);
         }
 
-        if (!queryText) {
-            console.log('[RAGDiaryPlugin] 未能构建有效的查询文本，跳过处理。');
-            let contentWithoutPlaceholders = systemMessage.content;
-            ragDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
-            fullTextDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
-            hybridDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
-            messages.find(m => m.role === 'system').content = contentWithoutPlaceholders;
-            return messages;
+        let queryVector = null;
+        if (aiVector && userVector) {
+            const userWeight = 0.7;
+            const aiWeight = 0.3;
+            console.log(`[RAGDiaryPlugin] Combining user and AI vectors with weights (User: ${userWeight}, AI: ${aiWeight}).`);
+            queryVector = this._getWeightedAverageVector([userVector, aiVector], [userWeight, aiWeight]);
+        } else if (userVector) {
+            console.log('[RAGDiaryPlugin] Using user vector only for query.');
+            queryVector = userVector;
+        } else if (aiVector) {
+            console.log('[RAGDiaryPlugin] Using AI vector only for query (no user message found).');
+            queryVector = aiVector;
         }
 
-        console.log(`[RAGDiaryPlugin] Final combined query text for vectorization: "${queryText.substring(0, 120)}..."`);
-
-        const queryVector = await this.getSingleEmbedding(queryText);
         if (!queryVector) {
-            console.error('[RAGDiaryPlugin] 查询向量化失败，跳过RAG处理。');
+            console.error('[RAGDiaryPlugin] 查询向量化失败或未能构建有效向量，跳过RAG处理。');
             let contentWithoutPlaceholders = systemMessage.content;
             ragDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
             fullTextDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
