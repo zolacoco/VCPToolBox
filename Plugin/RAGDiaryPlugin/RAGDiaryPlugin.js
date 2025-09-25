@@ -843,13 +843,19 @@ class RAGDiaryPlugin {
                 try {
                     const content = await fs.readFile(filePath, 'utf-8');
                     const firstLine = content.split('\n')[0];
-                    const match = firstLine.match(/^\[(\d{4}-\d{2}-\d{2})\]/);
+                    // V2.6: 兼容 [YYYY-MM-DD] 和 YYYY.MM.DD 两种日记时间戳格式
+                    const match = firstLine.match(/^\[?(\d{4}[-.]\d{2}[-.]\d{2})\]?/);
                     if (match) {
+                        const dateStr = match[1];
+                        // 将 YYYY.MM.DD 格式规范化为 YYYY-MM-DD
+                        const normalizedDateStr = dateStr.replace(/\./g, '-');
+                        
                         // 确保使用UTC时间比较，避免时区问题
-                        const diaryDate = new Date(match[1] + 'T00:00:00.000Z');
+                        const diaryDate = new Date(normalizedDateStr + 'T00:00:00.000Z');
+                        
                         if (diaryDate >= timeRange.start && diaryDate <= timeRange.end) {
                             diariesInRange.push({
-                                date: match[1],
+                                date: normalizedDateStr, // 使用规范化后的日期
                                 text: content,
                                 source: 'time'
                             });
