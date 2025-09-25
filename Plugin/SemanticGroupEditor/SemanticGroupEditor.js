@@ -78,17 +78,21 @@ async function updateGroups(params) {
         }
         
         // 创建或覆盖组
-        groups[groupname] = {
-            ...(groups[groupname] || {}), // 保留原有其他字段
-            words: wordsArray,
-            // 设置一些默认值
-            auto_learned: [],
-            weight: 1,
-            vector: null,
-            last_activated: null,
-            activation_count: 0,
-            vector_id: null
-        };
+        if (groups[groupname]) {
+            // 组已存在，只更新词元
+            groups[groupname].words = wordsArray;
+        } else {
+            // 组不存在，创建新组并设置默认值
+            groups[groupname] = {
+                words: wordsArray,
+                auto_learned: [],
+                weight: 1,
+                vector: null,
+                last_activated: null,
+                activation_count: 0,
+                vector_id: null
+            };
+        }
         updatedGroupNames.push(groupname);
 
     } else {
@@ -105,16 +109,21 @@ async function updateGroups(params) {
                 newGroupsCount++;
             }
 
-            groups[groupname] = {
-                ...(groups[groupname] || {}),
-                words: wordsArray,
-                auto_learned: [],
-                weight: 1,
-                vector: null,
-                last_activated: null,
-                activation_count: 0,
-                vector_id: null
-            };
+            if (groups[groupname]) {
+                // 组已存在，只更新词元
+                groups[groupname].words = wordsArray;
+            } else {
+                // 组不存在，创建新组并设置默认值
+                groups[groupname] = {
+                    words: wordsArray,
+                    auto_learned: [],
+                    weight: 1,
+                    vector: null,
+                    last_activated: null,
+                    activation_count: 0,
+                    vector_id: null
+                };
+            }
             updatedGroupNames.push(groupname);
             i++;
         }
