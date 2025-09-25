@@ -507,107 +507,107 @@ class RAGDiaryPlugin {
 
     // processMessages 是 messagePreprocessor 的标准接口
     async processMessages(messages, pluginConfig) {
-        // V2.4 修复: 精准定位包含占位符的system消息，避免在多system消息时污染其他消息
-        const targetSystemMessageIndex = messages.findIndex(m =>
-            m.role === 'system' &&
-            typeof m.content === 'string' &&
-            /\[\[.*日记本.*\]\]|<<.*日记本.*>>|《《.*日记本.*》》/.test(m.content)
-        );
+        // V3.0: 支持多system消息处理
+        // 1. 识别所有需要处理的 system 消息
+        const targetSystemMessageIndices = messages.reduce((acc, m, index) => {
+            if (m.role === 'system' &&
+                typeof m.content === 'string' &&
+                /\[\[.*日记本.*\]\]|<<.*日记本.*>>|《《.*日记本.*》》/.test(m.content)) {
+                acc.push(index);
+            }
+            return acc;
+        }, []);
 
-        // 如果没有找到任何包含RAG占位符的system消息，则直接返回，不做任何处理
-        if (targetSystemMessageIndex === -1) {
+        // 如果没有找到任何包含RAG占位符的system消息，则直接返回
+        if (targetSystemMessageIndices.length === 0) {
             return messages;
         }
 
-        const systemMessage = messages[targetSystemMessageIndex];
-
-        // 更新正则表达式以捕获 ::Time 标记
-        const groupAwareRegex = /\[\[(.*?)日记本(.*?)\]\]/g; // V2.1: More flexible regex
-        const ragDeclarations = [...systemMessage.content.matchAll(groupAwareRegex)];
-        const fullTextDeclarations = [...systemMessage.content.matchAll(/<<(.*?)日记本>>/g)];
-        const hybridDeclarations = [...systemMessage.content.matchAll(/《《(.*?)日记本(.*?)》》/g)]; // V2.1: More flexible regex
-        
-        // --- [最终修复] 统一准备 userContent 和 aiContent ---
+        // 2. 准备共享资源 (只计算一次)
         const lastUserMessageIndex = messages.findLastIndex(m => m.role === 'user');
         let userContent = '';
         let aiContent = null;
 
         if (lastUserMessageIndex > -1) {
             const lastUserMessage = messages[lastUserMessageIndex];
-            // 健壮地提取 userContent, 兼容 string 和 array 格式
             userContent = typeof lastUserMessage.content === 'string'
                 ? lastUserMessage.content
                 : (Array.isArray(lastUserMessage.content) ? lastUserMessage.content.find(p => p.type === 'text')?.text : '') || '';
 
-            // 向前搜索并正确解析最近的 'assistant' 消息
             for (let i = lastUserMessageIndex - 1; i >= 0; i--) {
-                const msg = messages[i];
-                if (msg.role === 'assistant') {
+                if (messages[i].role === 'assistant') {
+                    const msg = messages[i];
                     if (typeof msg.content === 'string') {
                         aiContent = msg.content;
                     } else if (Array.isArray(msg.content)) {
                         aiContent = msg.content.find(p => p.type === 'text')?.text || null;
                     }
-                    break; // 找到最近的一条就停止
+                    break;
                 }
             }
         }
 
-        // --- V2.5 优化: 独立向量化与加权平均 ---
-        let userVector = null;
-        let aiVector = null;
-
-        if (userContent) {
-            console.log(`[RAGDiaryPlugin] Vectorizing user query: "${userContent.substring(0, 100)}..."`);
-            userVector = await this.getSingleEmbedding(userContent);
-        }
-
-        if (aiContent) {
-            console.log(`[RAGDiaryPlugin] Vectorizing AI context: "${aiContent.substring(0, 100)}..."`);
-            aiVector = await this.getSingleEmbedding(aiContent);
-        }
+        const userVector = userContent ? await this.getSingleEmbedding(userContent) : null;
+        const aiVector = aiContent ? await this.getSingleEmbedding(aiContent) : null;
 
         let queryVector = null;
         if (aiVector && userVector) {
-            const userWeight = 0.7;
-            const aiWeight = 0.3;
-            console.log(`[RAGDiaryPlugin] Combining user and AI vectors with weights (User: ${userWeight}, AI: ${aiWeight}).`);
-            queryVector = this._getWeightedAverageVector([userVector, aiVector], [userWeight, aiWeight]);
-        } else if (userVector) {
-            console.log('[RAGDiaryPlugin] Using user vector only for query.');
-            queryVector = userVector;
-        } else if (aiVector) {
-            console.log('[RAGDiaryPlugin] Using AI vector only for query (no user message found).');
-            queryVector = aiVector;
+            queryVector = this._getWeightedAverageVector([userVector, aiVector], [0.7, 0.3]);
+        } else {
+            queryVector = userVector || aiVector;
         }
 
         if (!queryVector) {
-            console.error('[RAGDiaryPlugin] 查询向量化失败或未能构建有效向量，跳过RAG处理。');
-            let contentWithoutPlaceholders = systemMessage.content;
-            ragDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
-            fullTextDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
-            hybridDeclarations.forEach(match => { contentWithoutPlaceholders = contentWithoutPlaceholders.replace(match[0], ''); });
-            messages.find(m => m.role === 'system').content = contentWithoutPlaceholders;
-            return messages;
+            console.error('[RAGDiaryPlugin] 查询向量化失败，跳过RAG处理。');
+            // 安全起见，移除所有占位符
+            const newMessages = JSON.parse(JSON.stringify(messages));
+            for (const index of targetSystemMessageIndices) {
+                newMessages[index].content = newMessages[index].content
+                    .replace(/\[\[.*日记本.*\]\]/g, '')
+                    .replace(/<<.*日记本>>/g, '')
+                    .replace(/《《.*日记本.*》》/g, '');
+            }
+            return newMessages;
         }
-
-        let processedSystemContent = systemMessage.content;
-
-        // --- 处理 [[...]] RAG 片段检索 ---
+        
         const dynamicK = this._calculateDynamicK(userContent, aiContent);
-
-        // V2.3 修复 & 优化: 在循环外仅解析一次时间表达式
         const timeRanges = this.timeParser.parse(userContent);
-        if (timeRanges.length > 0) {
-            console.log(`[RAGDiaryPlugin] 识别到 ${timeRanges.length} 个时间范围，将为所有带::Time标记的日记本启用时间感知模式。`);
+
+        // 3. 循环处理每个识别到的 system 消息
+        const newMessages = JSON.parse(JSON.stringify(messages));
+        for (const index of targetSystemMessageIndices) {
+            console.log(`[RAGDiaryPlugin] Processing system message at index: ${index}`);
+            const systemMessage = newMessages[index];
+            
+            // 调用新的辅助函数处理单个消息
+            const processedContent = await this._processSingleSystemMessage(
+                systemMessage.content,
+                queryVector,
+                userContent, // 传递 userContent 用于语义组和时间解析
+                dynamicK,
+                timeRanges
+            );
+            
+            newMessages[index].content = processedContent;
         }
 
+        return newMessages;
+    }
+
+    // V3.0 新增: 处理单条 system 消息内容的辅助函数
+    async _processSingleSystemMessage(content, queryVector, userContent, dynamicK, timeRanges) {
+        let processedContent = content;
+
+        const ragDeclarations = [...processedContent.matchAll(/\[\[(.*?)日记本(.*?)\]\]/g)];
+        const fullTextDeclarations = [...processedContent.matchAll(/<<(.*?)日记本>>/g)];
+        const hybridDeclarations = [...processedContent.matchAll(/《《(.*?)日记本(.*?)》》/g)];
+
+        // --- 1. 处理 [[...]] RAG 片段检索 ---
         for (const match of ragDeclarations) {
             const placeholder = match[0];
             const dbName = match[1];
-            const modifiers = match[2] || ''; // e.g., ":1.5::Time::Group"
+            const modifiers = match[2] || '';
             
-            // --- 解析修饰符 ---
             const kMultiplierMatch = modifiers.match(/:(\d+\.?\d*)/);
             const kMultiplier = kMultiplierMatch ? parseFloat(kMultiplierMatch[1]) : 1.0;
             const useTime = modifiers.includes('::Time');
@@ -617,128 +617,74 @@ class RAGDiaryPlugin {
             const finalK = Math.max(1, Math.round(dynamicK * kMultiplier));
             let retrievedContent = '';
             let finalQueryVector = queryVector;
-            let activatedGroups = null; // 用于存储激活的语义组信息
+            let activatedGroups = null;
 
-            console.log(`[RAGDiaryPlugin] Processing "${displayName}" with modifiers: "${modifiers}" -> kMultiplier: ${kMultiplier}, useTime: ${useTime}, useGroup: ${useGroup}`);
-
-            // --- 步骤1: (可选) 语义组增强 ---
             if (useGroup) {
-                console.log(`[RAGDiaryPlugin] 模式: 语义组增强 for ${displayName}`);
                 activatedGroups = this.semanticGroups.detectAndActivateGroups(userContent);
-                
                 if (activatedGroups.size > 0) {
-                    const enhancedVector = await this.semanticGroups.getEnhancedVector(queryText, activatedGroups);
-                    if (enhancedVector) {
-                        finalQueryVector = enhancedVector;
-                        console.log(`[RAGDiaryPlugin] 语义组向量增强成功。`);
-                    } else {
-                         console.log(`[RAGDiaryPlugin] 语义组向量增强失败，回退到原始查询向量。`);
-                    }
-                } else {
-                    console.log(`[RAGDiaryPlugin] 未激活任何语义组，使用原始查询向量。`);
+                    const enhancedVector = await this.semanticGroups.getEnhancedVector(userContent, activatedGroups);
+                    if (enhancedVector) finalQueryVector = enhancedVector;
                 }
             }
 
-            // --- 步骤2: (可选) 时间感知检索 ---
-            if (useTime) {
-                console.log(`[RAGDiaryPlugin] 模式: 时间感知 for ${displayName}`);
-                
-                if (timeRanges && timeRanges.length > 0) {
-                    const allEntries = new Map();
-                    for (const timeRange of timeRanges) {
-                        // 使用可能被增强过的 finalQueryVector
-                        const resultsData = await this.processWithTimeFilter(dbName, finalQueryVector, timeRange, finalK);
-                        resultsData.results.forEach(entry => {
-                            const key = entry.text.trim();
-                            if (!allEntries.has(key)) {
-                                allEntries.set(key, entry);
-                            }
-                        });
-                    }
-                    const uniqueResults = Array.from(allEntries.values());
-                    retrievedContent = this.formatCombinedTimeAwareResults(uniqueResults, timeRanges, dbName);
-                } else {
-                    console.log(`[RAGDiaryPlugin] 时间模式已指定但未识别到时间表达式，回退到普通RAG模式 (可能已应用语义组增强)`);
-                    const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
-                    // 如果Group模式也激活了，使用Group的格式化函数
-                    if (useGroup) {
-                        retrievedContent = this.formatGroupRAGResults(searchResults, displayName, activatedGroups);
-                    } else {
-                        retrievedContent = this.formatStandardResults(searchResults, displayName);
-                    }
+            if (useTime && timeRanges && timeRanges.length > 0) {
+                const allEntries = new Map();
+                for (const timeRange of timeRanges) {
+                    const resultsData = await this.processWithTimeFilter(dbName, finalQueryVector, timeRange, finalK);
+                    resultsData.results.forEach(entry => {
+                        if (!allEntries.has(entry.text.trim())) {
+                            allEntries.set(entry.text.trim(), entry);
+                        }
+                    });
                 }
-            }
-            // --- 步骤3: 普通或仅语义组增强的检索 ---
-            else {
+                retrievedContent = this.formatCombinedTimeAwareResults(Array.from(allEntries.values()), timeRanges, dbName);
+            } else {
+                const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
                 if (useGroup) {
-                    // 仅 Group 模式
-                    console.log(`[RAGDiaryPlugin] 正在为 "${displayName}" 执行纯语义组增强检索...`);
-                    const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
                     retrievedContent = this.formatGroupRAGResults(searchResults, displayName, activatedGroups);
                 } else {
-                    // --- 普通 RAG 逻辑 ---
-                    console.log(`[RAGDiaryPlugin] 正在为 "${displayName}" 执行标准检索 (数据库键: ${dbName})...`);
-                    if (kMultiplier !== 1.0) {
-                        console.log(`[RAGDiaryPlugin] 应用K值乘数: ${kMultiplier}. (基础K: ${dynamicK} -> 最终K: ${finalK})`);
-                    }
-                    const searchResults = await this.vectorDBManager.search(dbName, finalQueryVector, finalK);
                     retrievedContent = this.formatStandardResults(searchResults, displayName);
                 }
             }
             
-            processedSystemContent = processedSystemContent.replace(placeholder, retrievedContent);
+            processedContent = processedContent.replace(placeholder, retrievedContent);
         }
 
-        // --- 处理 <<...>> RAG 全文检索 (加权标签和独立阈值增强版) ---
+        // --- 2. 处理 <<...>> RAG 全文检索 ---
         for (const match of fullTextDeclarations) {
             const placeholder = match[0];
             const dbName = match[1];
             const diaryConfig = this.ragConfig[dbName] || {};
             const localThreshold = diaryConfig.threshold || GLOBAL_SIMILARITY_THRESHOLD;
 
-            console.log(`[RAGDiaryPlugin] 正在为 <<${dbName}日记本>> 进行相关性评估 (阈值: ${localThreshold})...`);
-
-            // 1. 基础名称向量
             const dbNameVector = await this.getSingleEmbedding(dbName);
             if (!dbNameVector) {
-                console.error(`[RAGDiaryPlugin] 日记本名称 "${dbName}" 向量化失败，跳过。`);
-                processedSystemContent = processedSystemContent.replace(placeholder, '');
+                processedContent = processedContent.replace(placeholder, '');
                 continue;
             }
-            const baseSimilarity = this.cosineSimilarity(queryVector, dbNameVector);
-            console.log(`[RAGDiaryPlugin] 基础名称 "${dbName}" 的相关度: ${baseSimilarity.toFixed(4)}`);
-
-            // 2. 如果有标签，则计算加权增强向量的相似度
-            let enhancedSimilarity = 0;
-            // const tagsConfig = diaryConfig.tags; // 不再需要这行
             
-            // 从缓存中直接获取预计算的向量
+            const baseSimilarity = this.cosineSimilarity(queryVector, dbNameVector);
             const enhancedVector = this.enhancedVectorCache[dbName];
-
-            if (enhancedVector) {
-                enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
-                console.log(`[RAGDiaryPlugin] (从缓存) 加权增强文本的相关度: ${enhancedSimilarity.toFixed(4)}`);
-            }
-
-            // 3. 取两种相似度中的最大值作为最终决策依据
+            const enhancedSimilarity = enhancedVector ? this.cosineSimilarity(queryVector, enhancedVector) : 0;
             const finalSimilarity = Math.max(baseSimilarity, enhancedSimilarity);
-            console.log(`[RAGDiaryPlugin] <<${dbName}日记本>> 的最终决策相关度: ${finalSimilarity.toFixed(4)}`);
 
-            // 4. 使用局部或全局阈值进行决策
             if (finalSimilarity >= localThreshold) {
-                console.log(`[RAGDiaryPlugin] 相关度高于阈值 ${localThreshold}，将注入 "${dbName}" 的完整日记内容。`);
                 const diaryContent = await this.getDiaryContent(dbName);
-                processedSystemContent = processedSystemContent.replace(placeholder, diaryContent);
+                // 安全措施：在注入的内容中递归地移除占位符，防止循环
+                const safeContent = diaryContent
+                    .replace(/\[\[.*日记本.*\]\]/g, '[循环占位符已移除]')
+                    .replace(/<<.*日记本>>/g, '[循环占位符已移除]')
+                    .replace(/《《.*日记本.*》》/g, '[循环占位符已移除]');
+                processedContent = processedContent.replace(placeholder, safeContent);
             } else {
-                console.log(`[RAGDiaryPlugin] 相关度低于阈值，将忽略 <<${dbName}日记本>>。`);
-                processedSystemContent = processedSystemContent.replace(placeholder, '');
+                processedContent = processedContent.replace(placeholder, '');
             }
         }
 
-        // --- 处理《〈...〉》混合模式：先判断阈值，再进行片段检索 ---
+        // --- 3. 处理 《《...》》 混合模式 ---
         for (const match of hybridDeclarations) {
-            const placeholder = match[0];      // 例如 《《小克日记本:1.5》》
-            const dbName = match[1];           // 例如 "小克"
+            const placeholder = match[0];
+            const dbName = match[1];
             const modifiers = match[2] || '';
             const kMultiplierMatch = modifiers.match(/:(\d+\.?\d*)/);
             const kMultiplier = kMultiplierMatch ? parseFloat(kMultiplierMatch[1]) : 1.0;
@@ -746,62 +692,28 @@ class RAGDiaryPlugin {
             const diaryConfig = this.ragConfig[dbName] || {};
             const localThreshold = diaryConfig.threshold || GLOBAL_SIMILARITY_THRESHOLD;
 
-            console.log(`[RAGDiaryPlugin] 正在为《《${dbName}日记本》》进行相关性评估 (阈值: ${localThreshold})...`);
-
-            // 1. 计算相似度 (逻辑与 <<>> 模式完全相同)
             const dbNameVector = await this.getSingleEmbedding(dbName);
             if (!dbNameVector) {
-                console.error(`[RAGDiaryPlugin] 日记本名称 "${dbName}" 向量化失败，跳过。`);
-                processedSystemContent = processedSystemContent.replace(placeholder, '');
+                processedContent = processedContent.replace(placeholder, '');
                 continue;
             }
+
             const baseSimilarity = this.cosineSimilarity(queryVector, dbNameVector);
-            let enhancedSimilarity = 0;
             const enhancedVector = this.enhancedVectorCache[dbName];
-
-            if (enhancedVector) {
-                enhancedSimilarity = this.cosineSimilarity(queryVector, enhancedVector);
-            }
+            const enhancedSimilarity = enhancedVector ? this.cosineSimilarity(queryVector, enhancedVector) : 0;
             const finalSimilarity = Math.max(baseSimilarity, enhancedSimilarity);
-            console.log(`[RAGDiaryPlugin] 《《${dbName}日记本》》 的最终决策相关度: ${finalSimilarity.toFixed(4)}`);
 
-            // 2. 决策：如果高于阈值，则执行片段检索
             if (finalSimilarity >= localThreshold) {
-                console.log(`[RAGDiaryPlugin] 相关度高于阈值 ${localThreshold}，将为 "${dbName}" 执行片段检索。`);
-                
-                // 执行与 [[]] 模式完全相同的检索逻辑
                 const finalK = Math.max(1, Math.round(dynamicK * kMultiplier));
-                if (kMultiplier !== 1.0) {
-                    console.log(`[RAGDiaryPlugin] 应用K值乘数: ${kMultiplier}. (基础K: ${dynamicK} -> 最终K: ${finalK})`);
-                }
-
                 const searchResults = await this.vectorDBManager.search(dbName, queryVector, finalK);
-                
-                let retrievedContent = `\n[--- 从"${dbName}日记本"中检索到的相关记忆片段 ---]\n`;
-                if (searchResults && searchResults.length > 0) {
-                    retrievedContent += searchResults.map(r => `* ${r.text.trim()}`).join('\n');
-                } else {
-                    retrievedContent += "没有找到直接相关的记忆片段。";
-                }
-                retrievedContent += `\n[--- 记忆片段结束 ---]\n`;
-                
-                processedSystemContent = processedSystemContent.replace(placeholder, retrievedContent);
-
+                const retrievedContent = this.formatStandardResults(searchResults, dbName + '日记本');
+                processedContent = processedContent.replace(placeholder, retrievedContent);
             } else {
-                console.log(`[RAGDiaryPlugin] 相关度低于阈值，将忽略《《${dbName}日记本》》。`);
-                processedSystemContent = processedSystemContent.replace(placeholder, '');
+                processedContent = processedContent.replace(placeholder, '');
             }
         }
 
-        // --- V2.4 修复: 创建消息数组的深拷贝，并直接使用之前找到的索引进行精准更新 ---
-        const newMessages = JSON.parse(JSON.stringify(messages));
-        newMessages[targetSystemMessageIndex].content = processedSystemContent;
-
-        if (process.env.DebugMode === 'true') {
-            console.log(`[RAGDiaryPlugin] 已精准更新索引为 ${targetSystemMessageIndex} 的 system 消息。`);
-        }
- 
-        return newMessages;
+        return processedContent;
     }
     
     //####################################################################################
