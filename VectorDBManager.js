@@ -507,6 +507,7 @@ class VectorDBManager {
         }
 
         return new Promise((resolve, reject) => {
+            console.log(`[VectorDB][Search] Creating search worker for "${diaryName}".`);
             const worker = new Worker(path.resolve(__dirname, 'vectorSearchWorker.js'), {
                 workerData: {
                     diaryName,
@@ -518,26 +519,30 @@ class VectorDBManager {
             });
 
             worker.on('message', (message) => {
+                console.log(`[VectorDB][Search] Received message from worker for "${diaryName}". Status: ${message.status}`);
                 if (message.status === 'success') {
                     const searchResults = message.results;
                     this.searchCache.set(diaryName, queryVector, k, searchResults);
                     this.recordMetric('search_success', performance.now() - startTime);
-                    console.log(`[VectorDB][Search] Worker found ${searchResults.length} matching chunks for "${diaryName}".`);
+                    console.log(`[VectorDB][Search] Worker found ${searchResults.length} matching chunks for "${diaryName}". Resolving promise.`);
                     resolve(searchResults);
                 } else {
                     console.error(`[VectorDB][Search] Worker returned an error for "${diaryName}":`, message.error);
-                    resolve([]); // or reject(new Error(message.error));
+                    console.log(`[VectorDB][Search] Resolving promise with empty array due to worker error.`);
+                    resolve([]);
                 }
             });
 
             worker.on('error', (error) => {
                 console.error(`[VectorDB][Search] Worker for "${diaryName}" encountered a critical error:`, error);
-                resolve([]); // or reject(error);
+                console.log(`[VectorDB][Search] Resolving promise with empty array due to critical worker error.`);
+                resolve([]);
             });
 
             worker.on('exit', (code) => {
+                console.log(`[VectorDB][Search] Worker for "${diaryName}" exited with code ${code}.`);
                 if (code !== 0) {
-                    console.error(`[VectorDB][Search] Worker for "${diaryName}" stopped with exit code ${code}`);
+                    console.error(`[VectorDB][Search] Worker for "${diaryName}" stopped with a non-zero exit code.`);
                 }
             });
         });
