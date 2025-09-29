@@ -711,7 +711,7 @@ Description Length: ${newDescription.length}`);
         
         // Rebuild the .env string from the form, preserving comments and order
         const currentPluginEntries = originalPluginConfigs[pluginName] || [];
-        const newConfigString = buildEnvStringForPlugin(form, currentPluginEntries);
+        const newConfigString = buildEnvStringForPlugin(form, currentPluginEntries, pluginName);
 
         try {
             await apiFetch(`${API_BASE_URL}/plugins/${pluginName}/config`, {
@@ -723,7 +723,7 @@ Description Length: ${newDescription.length}`);
         } catch (error) { /* Error handled by apiFetch */ }
     }
 
-    function buildEnvStringForPlugin(formElement, originalParsedEntries) {
+    function buildEnvStringForPlugin(formElement, originalParsedEntries, pluginName) {
         const finalLines = [];
         const editedKeysInForm = new Set();
 
