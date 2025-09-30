@@ -841,3 +841,12 @@ html[data-theme='light'] .delete-agent-map-btn {
     flex-grow: 1;
     resize: none; /* Disable manual resize in this layout */
 }
+
+
+/* --- 响应式布局调整 --- */
+@media (max-width: 2000px) {
+    .agent-manager-container {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+}
