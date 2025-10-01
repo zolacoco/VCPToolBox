@@ -230,8 +230,6 @@ class ChatCompletionHandler {
                         let collectedContentThisTurn = ""; // Collects textual content from delta
                         let rawResponseDataThisTurn = ""; // Collects all raw chunks for diary
 
-                        const isGpt5Mini = originalBody.model === 'GPT-5-mini';
-                        const thinkingRegex = /^Thinking\.\.\.( \(\d+s elapsed\))?$/;
                         let sseLineBuffer = ""; // Buffer for incomplete SSE lines
 
                         aiResponse.body.on('data', (chunk) => {
@@ -251,23 +249,7 @@ class ChatCompletionHandler {
                                         try {
                                             const parsedData = JSON.parse(jsonData);
                                             const content = parsedData.choices?.[0]?.delta?.content;
-                                            const reasoningContent = parsedData.choices?.[0]?.delta?.reasoning_content;
-
-                                            // Core filtering logic for thinking content (GPT-5-mini)
-                                            if (isGpt5Mini && content && thinkingRegex.test(content)) {
-                                                if (DEBUG_MODE) {
-                                                    console.log(`[GPT-5-mini-Compat] Intercepted thinking SSE chunk: ${content}`);
-                                                }
-                                                continue; // Skip this line
-                                            }
-
-                                            // Filter out reasoning_content from all models (o1, etc.)
-                                            if (reasoningContent !== undefined) {
-                                                if (DEBUG_MODE) {
-                                                    console.log(`[Reasoning-Content-Filter] Intercepted reasoning_content chunk from model ${originalBody.model}: ${reasoningContent}`);
-                                                }
-                                                continue; // Skip this line entirely
-                                            }
+                                            // Filtering logic for thinking/reasoning content has been removed.
                                         } catch (e) {
                                             // Not a JSON we care about, pass through
                                         }
@@ -365,25 +347,9 @@ class ChatCompletionHandler {
                                             try {
                                                 const parsedData = JSON.parse(jsonData);
                                                 const content = parsedData.choices?.[0]?.delta?.content;
-                                                const reasoningContent = parsedData.choices?.[0]?.delta?.reasoning_content;
+                                                // Filtering logic for thinking/reasoning content has been removed.
 
-                                                // Apply the same filtering logic as in the main processing
-                                                if (isGpt5Mini && content && thinkingRegex.test(content)) {
-                                                    if (DEBUG_MODE) {
-                                                        console.log(`[GPT-5-mini-Compat] Intercepted thinking SSE chunk in finalize: ${content}`);
-                                                    }
-                                                    continue; // Skip this line
-                                                }
-
-                                                // Filter out reasoning_content from all models (o1, etc.)
-                                                if (reasoningContent !== undefined) {
-                                                    if (DEBUG_MODE) {
-                                                        console.log(`[Reasoning-Content-Filter] Intercepted reasoning_content chunk in finalize from model ${originalBody.model}: ${reasoningContent}`);
-                                                    }
-                                                    continue; // Skip this line entirely
-                                                }
-
-                                                // Only collect content if it passed all filters
+                                                // All content is now collected.
                                                 collectedContentThisTurn += content || '';
                                             } catch (e) { /* ignore */ }
                                         }
