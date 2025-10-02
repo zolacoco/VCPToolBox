@@ -61,7 +61,7 @@ function pageToMarkdown() {
         }
 
         let markdown = `# ${document.title}\nURL: ${document.URL}\n\n`;
-        const ignoredTags = ['SCRIPT', 'STYLE', 'NAV', 'FOOTER', 'ASIDE', 'IFRAME', 'NOSCRIPT'];
+        const ignoredTags = ['SCRIPT', 'STYLE', 'FOOTER', 'IFRAME', 'NOSCRIPT']; // 移除 'NAV' 和 'ASIDE'
         const processedNodes = new WeakSet(); // 记录已处理过的节点，防止重复
 
         function processNode(node) {
@@ -109,6 +109,19 @@ function pageToMarkdown() {
             node.childNodes.forEach(child => {
                 childContent += processNode(child);
             });
+
+            // 新增代码开始
+            if (node.nodeType === Node.ELEMENT_NODE && childContent.trim()) {
+                const tagName = node.tagName.toLowerCase();
+                if (tagName === 'nav') {
+                    // 为导航区添加标题和代码块包裹
+                    return '\n## 导航区\n```markdown\n' + childContent.trim() + '\n```\n\n';
+                } else if (tagName === 'aside') {
+                    // 为侧边栏添加标题和代码块包裹
+                    return '\n## 侧边栏\n```markdown\n' + childContent.trim() + '\n```\n\n';
+                }
+            }
+            // 新增代码结束
 
             // 5. 为块级元素添加换行以保持结构
             if (node.nodeType === Node.ELEMENT_NODE && childContent.trim()) {
