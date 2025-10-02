@@ -1,6 +1,8 @@
 console.log('VCPChrome background.js loaded.');
 let ws = null;
 let isConnected = false;
+let heartbeatIntervalId = null; // 新增：用于存储心跳定时器的ID
+const HEARTBEAT_INTERVAL = 30 * 1000; // 30秒发送一次心跳
 const defaultServerUrl = 'ws://localhost:8088'; // 默认服务器地址
 const defaultVcpKey = 'your_secret_key'; // 默认密钥
 
@@ -25,6 +27,13 @@ function connect() {
             isConnected = true;
             updateIcon();
             broadcastStatusUpdate(); // 广播最新状态
+            // 启动心跳包
+            heartbeatIntervalId = setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }));
+                    console.log('Sent heartbeat.');
+                }
+            }, HEARTBEAT_INTERVAL);
         };
 
         ws.onmessage = (event) => {
@@ -32,7 +41,10 @@ function connect() {
             const message = JSON.parse(event.data);
             
             // 处理来自服务器的指令
-            if (message.type === 'command') {
+            if (message.type === 'heartbeat_ack') {
+                console.log('Received heartbeat acknowledgment.');
+                // 可以选择更新一个时间戳来跟踪连接活跃度
+            } else if (message.type === 'command') {
                 const commandData = message.data;
                 console.log('Received commandData:', commandData);
                 // 检查是否是 open_url 指令
@@ -85,6 +97,10 @@ function connect() {
             ws = null;
             updateIcon();
             broadcastStatusUpdate(); // 广播最新状态
+            if (heartbeatIntervalId) {
+                clearInterval(heartbeatIntervalId);
+                heartbeatIntervalId = null;
+            }
         };
 
         ws.onerror = (error) => {
@@ -93,6 +109,10 @@ function connect() {
             ws = null;
             updateIcon();
             broadcastStatusUpdate(); // 广播最新状态
+            if (heartbeatIntervalId) {
+                clearInterval(heartbeatIntervalId);
+                heartbeatIntervalId = null;
+            }
         };
     });
 }
