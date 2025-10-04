@@ -41,7 +41,7 @@ function isInteractive(node) {
         // 如果一个元素没有文本内容但有子元素，它可能只是一个包装器
         if ((node.innerText || '').trim().length === 0 && node.children.length > 0) {
              // 但如果这个包装器有role属性，它可能是一个自定义组件
-             if (!role) return false;
+            if (!role) return false;
         }
         return true;
     }
@@ -462,13 +462,16 @@ function sendPageInfoUpdate() {
     const currentPageContent = pageToMarkdown();
     if (currentPageContent && currentPageContent !== lastPageContent) {
         lastPageContent = currentPageContent;
+        console.log('[VCP Content] 📤 发送页面信息到background');
         chrome.runtime.sendMessage({
             type: 'PAGE_INFO_UPDATE',
             data: { markdown: currentPageContent }
         }, () => {
             // 检查 chrome.runtime.lastError 以优雅地处理上下文失效的错误
             if (chrome.runtime.lastError) {
-                // console.log("Page info update failed, context likely invalidated.");
+                // console.log("[VCP Content] Page info update failed, context likely invalidated.");
+            } else {
+                console.log('[VCP Content] ✅ 页面信息已发送');
             }
         });
     }
@@ -479,6 +482,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         lastPageContent = '';
     } else if (request.type === 'REQUEST_PAGE_INFO_UPDATE') {
         sendPageInfoUpdate();
+    } else if (request.type === 'FORCE_PAGE_UPDATE') {
+        // 新增：强制更新页面信息（手动刷新）
+        console.log('[VCP Content] 🔄 收到强制更新请求');
+        lastPageContent = ''; // 清除缓存，强制重新生成
+        const currentPageContent = pageToMarkdown();
+        if (currentPageContent) {
+            lastPageContent = currentPageContent;
+            console.log('[VCP Content] 📤 发送强制更新的页面信息');
+            chrome.runtime.sendMessage({
+                type: 'PAGE_INFO_UPDATE',
+                data: { markdown: currentPageContent }
+            }, () => {
+                if (chrome.runtime.lastError) {
+                    console.log("[VCP Content] ❌ 强制更新失败:", chrome.runtime.lastError.message);
+                    sendResponse({ success: false });
+                } else {
+                    console.log("[VCP Content] ✅ 强制更新成功");
+                    sendResponse({ success: true });
+                }
+            });
+        } else {
+            console.log('[VCP Content] ❌ 无法获取页面内容');
+            sendResponse({ success: false, error: '无法获取页面内容' });
+        }
+        return true; // 保持消息通道开放
     } else if (request.type === 'EXECUTE_COMMAND') {
         const { command, target, text, requestId, sourceClientId } = request.data;
         let result = {};
