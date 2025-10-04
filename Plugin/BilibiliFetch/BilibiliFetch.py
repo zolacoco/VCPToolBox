@@ -207,19 +207,19 @@ def get_subtitle_json_string(bvid: str, user_cookie: str | None, lang_code: str 
 
 # --- Main execution for VCP Synchronous Plugin ---
 
-def process_bilibili_url(video_input: str) -> str:
+def process_bilibili_url(video_input: str, lang_code: str | None = None) -> str:
     """
     Processes a Bilibili URL or BV ID to fetch and return subtitle text.
     Reads cookie from BILIBILI_COOKIE environment variable.
+    Accepts a language code for subtitle selection.
     Returns plain text subtitle content or an empty string on failure.
     """
     user_cookie = os.environ.get('BILIBILI_COOKIE')
-    lang_code = os.environ.get('BILIBILI_SUB_LANG')
 
     if user_cookie:
         logging.info("Using cookie from BILIBILI_COOKIE environment variable.")
     if lang_code:
-        logging.info(f"Subtitle language preference set to: {lang_code}")
+        logging.info(f"Subtitle language preference passed as argument: {lang_code}")
 
 
     bvid = extract_bvid(video_input)
@@ -266,12 +266,13 @@ if __name__ == "__main__":
 
         input_data = json.loads(input_data_raw)
         url = input_data.get('url')
+        lang = input_data.get('lang') # Get lang from input
 
         if not url:
             raise ValueError("Missing required argument: url")
 
-        # Call the new processing function
-        result_text = process_bilibili_url(url)
+        # Call the new processing function with the lang parameter
+        result_text = process_bilibili_url(url, lang_code=lang)
 
         output = {"status": "success", "result": result_text}
 

@@ -10,23 +10,25 @@
 
 ## 配置
 
-在项目根目录的 `config.env` 文件中添加以下变量：
+### 环境变量
 
-1.  **`BILIBILI_COOKIE`** (必需)
-    - **作用**: 你的Bilibili网站登录Cookie。对于某些需要登录才能观看或获取完整内容的视频是必需的。
-    - **示例**: `BILIBILI_COOKIE="SESSDATA=xxxx;..."`
+在项目根目录的 `config.env` 文件中，你需要配置以下变量：
 
-2.  **`BILIBILI_SUB_LANG`** (可选)
-    - **作用**: 指定优先获取的字幕语言。
-    - **格式**: Bilibili API提供的语言代码。这些代码会在服务器运行日志中显示。
-    - **常见值**:
-        - `ai-zh`: 中文 (简体)
-        - `ai-en`: 英文
-        - 其他语言 (如 `ai-ja` for 日语)
-    - **默认行为**:
-        1.  如果设置了此变量，插件会优先尝试获取指定语言的字幕。
-        2.  如果未设置，插件会**默认尝试获取中文 (`ai-zh`)**。
-        3.  如果中文也不存在，插件会选择API返回的第一个可用字幕。
+- **`BILIBILI_COOKIE`** (必需): 你的Bilibili网站登录Cookie。对于某些需要登录才能观看或获取完整内容的视频是必需的。
+  - **示例**: `BILIBILI_COOKIE="SESSDATA=xxxx;..."`
+
+## AI 调用参数
+
+当AI调用此工具时，可以传入以下参数：
+
+1.  **`url`** (必需)
+    - **描述**: Bilibili视频的URL。
+    - **示例**: `https://www.bilibili.com/video/BV1PoMDzdEga`
+
+2.  **`lang`** (可选)
+    - **描述**: 指定要获取的字幕语言代码。
+    - **常见值**: `ai-zh` (中文), `ai-en` (英文)。
+    - **默认行为**: 如果不提供此参数，插件将默认尝试获取**中文字幕**。如果中文不存在，则选择第一个可用的字幕。
 
 ### 如何查找可用的语言代码？
 
@@ -36,13 +38,14 @@
 INFO - Available subtitle languages: ['ai-en', 'ai-zh']
 ```
 
-你可以从这个列表中选择一个代码填入你的 `config.env` 文件。
+AI可以根据这个列表来决定使用哪个语言代码。
 
-### `config.env` 示例
+### AI 调用示例
 
-```env
-# Bilibili用户Cookie
-BILIBILI_COOKIE="SESSDATA=xxxx;bili_jct=xxxx;"
-
-# 指定优先获取中文字幕
-BILIBILI_SUB_LANG=ai-zh
+```text
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」BilibiliFetch「末」,
+url:「始」https://www.bilibili.com/video/BV1PoMDzdEga「末」,
+lang:「始」ai-en「末」
+<<<[END_TOOL_REQUEST]>>>
+```
