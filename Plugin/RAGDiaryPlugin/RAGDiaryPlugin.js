@@ -5,6 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto'); // <--- 引入加密模块
 const dotenv = require('dotenv');
+const cheerio = require('cheerio'); // <--- 新增：用于解析和清理HTML
 const TIME_EXPRESSIONS = require('./timeExpressions.config.js');
 const SemanticGroupManager = require('./SemanticGroupManager.js');
 
@@ -524,6 +525,15 @@ class RAGDiaryPlugin {
         return finalK;
     }
 
+    _stripHtml(html) {
+        if (!html || typeof html !== 'string') {
+            return html;
+        }
+        // 使用 cheerio 加载 HTML 并提取纯文本
+        const $ = cheerio.load(html);
+        return $.text();
+    }
+
     // processMessages 是 messagePreprocessor 的标准接口
     async processMessages(messages, pluginConfig) {
         // V3.0: 支持多system消息处理
@@ -563,6 +573,22 @@ class RAGDiaryPlugin {
                     }
                     break;
                 }
+            }
+        }
+
+        // V3.1: 在向量化之前，清理userContent和aiContent中的HTML标签
+        if (userContent) {
+            const originalUserContent = userContent;
+            userContent = this._stripHtml(userContent);
+            if (originalUserContent.length !== userContent.length) {
+                console.log('[RAGDiaryPlugin] User content was sanitized from HTML.');
+            }
+        }
+        if (aiContent) {
+            const originalAiContent = aiContent;
+            aiContent = this._stripHtml(aiContent);
+            if (originalAiContent.length !== aiContent.length) {
+                console.log('[RAGDiaryPlugin] AI content was sanitized from HTML.');
             }
         }
 
