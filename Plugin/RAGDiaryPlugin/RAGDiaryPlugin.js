@@ -616,7 +616,8 @@ class RAGDiaryPlugin {
         }
         
         const dynamicK = this._calculateDynamicK(userContent, aiContent);
-        const timeRanges = this.timeParser.parse(userContent);
+        const combinedTextForTimeParsing = [userContent, aiContent].filter(Boolean).join('\n');
+        const timeRanges = this.timeParser.parse(combinedTextForTimeParsing);
 
         // 3. 循环处理每个识别到的 system 消息
         const newMessages = JSON.parse(JSON.stringify(messages));
