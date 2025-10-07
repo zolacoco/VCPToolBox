@@ -529,9 +529,12 @@ class RAGDiaryPlugin {
         if (!html || typeof html !== 'string') {
             return html;
         }
-        // 使用 cheerio 加载 HTML 并提取纯文本
+        // 1. 使用 cheerio 加载 HTML 并提取纯文本
         const $ = cheerio.load(html);
-        return $.text();
+        const plainText = $.text();
+        
+        // 2. 将连续的换行符（两个或更多）替换为单个换行符，并移除首尾空白，以减少噪音
+        return plainText.replace(/\n{2,}/g, '\n').trim();
     }
 
     // processMessages 是 messagePreprocessor 的标准接口
