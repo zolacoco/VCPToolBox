@@ -565,7 +565,7 @@ class RAGDiaryPlugin {
             const content = typeof m.content === 'string'
                 ? m.content
                 : (Array.isArray(m.content) ? m.content.find(p => p.type === 'text')?.text : '') || '';
-            return !content.startsWith('[系统邀请指令:]');
+            return !content.startsWith('[系统邀请指令:]') && !content.startsWith('[系统提示:]');
         });
         const lastAiMessageIndex = messages.findLastIndex(m => m.role === 'assistant');
 
