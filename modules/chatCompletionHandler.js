@@ -933,7 +933,6 @@ class ChatCompletionHandler {
             }
 
         } catch (error) {
-            console.error('处理请求或转发时出错:', error.message, error.stack);
             if (error.name === 'AbortError') {
                 console.log(`[Abort] Request ${id} was aborted by the user.`);
                 if (!res.headersSent) {
@@ -950,6 +949,8 @@ class ChatCompletionHandler {
                 }
                 return;
             }
+            // Only log full stack trace for non-abort errors
+            console.error('处理请求或转发时出错:', error.message, error.stack);
 
             if (!res.headersSent) {
                 res.status(500).json({ error: 'Internal Server Error', details: error.message });
