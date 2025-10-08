@@ -557,7 +557,16 @@ class RAGDiaryPlugin {
 
         // 2. 准备共享资源 (V3.3: 精准上下文提取)
         // 始终寻找最后一个用户消息和最后一个AI消息，以避免注入污染。
-        const lastUserMessageIndex = messages.findLastIndex(m => m.role === 'user');
+        // V3.4: 跳过特殊的 "系统邀请指令" user 消息
+        const lastUserMessageIndex = messages.findLastIndex(m => {
+            if (m.role !== 'user') {
+                return false;
+            }
+            const content = typeof m.content === 'string'
+                ? m.content
+                : (Array.isArray(m.content) ? m.content.find(p => p.type === 'text')?.text : '') || '';
+            return !content.startsWith('[系统邀请指令:]');
+        });
         const lastAiMessageIndex = messages.findLastIndex(m => m.role === 'assistant');
 
         let userContent = '';
