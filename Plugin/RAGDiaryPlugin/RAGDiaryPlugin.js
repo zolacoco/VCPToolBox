@@ -275,6 +275,7 @@ class RAGDiaryPlugin {
         this.vectorDBManager = null;
         this.ragConfig = {};
         this.rerankConfig = {}; // <--- 新增：用于存储Rerank配置
+        this.pushVcpInfo = null; // 新增：用于推送 VCP Info
         this.enhancedVectorCache = {}; // <--- 新增：用于存储增强向量的缓存
         this.timeParser = new TimeExpressionParser('zh-CN'); // 实例化时间解析器
         this.semanticGroups = new SemanticGroupManager(this); // 实例化语义组管理器
@@ -413,6 +414,12 @@ class RAGDiaryPlugin {
         if (dependencies.vectorDBManager) {
             this.vectorDBManager = dependencies.vectorDBManager;
             console.log('[RAGDiaryPlugin] VectorDBManager 依赖已注入。');
+        }
+        if (dependencies.vcpLogFunctions && typeof dependencies.vcpLogFunctions.pushVcpInfo === 'function') {
+            this.pushVcpInfo = dependencies.vcpLogFunctions.pushVcpInfo;
+            console.log('[RAGDiaryPlugin] pushVcpInfo 依赖已成功注入。');
+        } else {
+            console.error('[RAGDiaryPlugin] 警告：pushVcpInfo 依赖注入失败或未提供。');
         }
     }
     
@@ -652,6 +659,9 @@ class RAGDiaryPlugin {
 
     // V3.0 新增: 处理单条 system 消息内容的辅助函数
     async _processSingleSystemMessage(content, queryVector, userContent, dynamicK, timeRanges) {
+        if (!this.pushVcpInfo) {
+            console.warn('[RAGDiaryPlugin] _processSingleSystemMessage: pushVcpInfo is null. Cannot broadcast RAG details.');
+        }
         let processedContent = content;
         const processedDiaries = new Set(); // 用于跟踪已处理的日记本，防止循环引用
 
@@ -689,6 +699,7 @@ class RAGDiaryPlugin {
             let retrievedContent = '';
             let finalQueryVector = queryVector;
             let activatedGroups = null;
+            let finalResultsForBroadcast = null; // 新增：用于广播的最终结果
 
             if (useGroup) {
                 activatedGroups = this.semanticGroups.detectAndActivateGroups(userContent);
@@ -729,7 +740,8 @@ class RAGDiaryPlugin {
                 }
 
                 // 5. Format the combined results.
-                retrievedContent = this.formatCombinedTimeAwareResults(Array.from(allEntries.values()), timeRanges, dbName);
+                finalResultsForBroadcast = Array.from(allEntries.values());
+                retrievedContent = this.formatCombinedTimeAwareResults(finalResultsForBroadcast, timeRanges, dbName);
 
             } else {
                 // --- Standard path (no time filter) ---
@@ -740,10 +752,34 @@ class RAGDiaryPlugin {
                     searchResults = await this._rerankDocuments(userContent, searchResults, finalK);
                 }
 
+                // 为标准 RAG 结果添加 'source' 属性以修复前端显示 [undefined] 的问题
+                finalResultsForBroadcast = searchResults.map(r => ({ ...r, source: 'rag' }));
+
                 if (useGroup) {
                     retrievedContent = this.formatGroupRAGResults(searchResults, displayName, activatedGroups);
                 } else {
                     retrievedContent = this.formatStandardResults(searchResults, displayName);
+                }
+            }
+            
+            // VCPInfo 广播：发送详细的 RAG 检索结果
+            if (this.pushVcpInfo && finalResultsForBroadcast) {
+                try {
+                    const cleanedResults = this._cleanResultsForBroadcast(finalResultsForBroadcast);
+                    const infoData = {
+                        type: 'RAG_RETRIEVAL_DETAILS',
+                        dbName: dbName,
+                        query: userContent,
+                        k: finalK,
+                        useTime: useTime,
+                        useGroup: useGroup,
+                        useRerank: useRerank,
+                        timeRanges: useTime ? timeRanges.map(r => ({ start: r.start.toISOString(), end: r.end.toISOString() })) : undefined,
+                        results: cleanedResults
+                    };
+                    this.pushVcpInfo(infoData);
+                } catch (broadcastError) {
+                    console.error(`[RAGDiaryPlugin] Error during VCPInfo broadcast (RAG path):`, broadcastError);
                 }
             }
             
@@ -831,6 +867,27 @@ class RAGDiaryPlugin {
                 }
 
                 const retrievedContent = this.formatStandardResults(searchResults, dbName + '日记本');
+                
+                // VCPInfo 广播：发送详细的 RAG 检索结果 (混合模式)
+                if (this.pushVcpInfo) {
+                    try {
+                        const cleanedResults = this._cleanResultsForBroadcast(searchResults);
+                        const infoData = {
+                            type: 'RAG_RETRIEVAL_DETAILS',
+                            dbName: dbName,
+                            query: userContent,
+                            k: finalK,
+                            useTime: false,
+                            useGroup: false,
+                            useRerank: useRerank,
+                            results: cleanedResults
+                        };
+                        this.pushVcpInfo(infoData);
+                    } catch (broadcastError) {
+                        console.error(`[RAGDiaryPlugin] Error during VCPInfo broadcast (Hybrid path):`, broadcastError);
+                    }
+                }
+
                 processedContent = processedContent.replace(placeholder, retrievedContent);
             } else {
                 processedContent = processedContent.replace(placeholder, '');
@@ -1158,6 +1215,20 @@ class RAGDiaryPlugin {
         return finalDocs;
     }
     
+    _cleanResultsForBroadcast(results) {
+        if (!Array.isArray(results)) return [];
+        return results.map(r => {
+            // 仅保留可序列化的关键属性
+            return {
+                text: r.text || '',
+                score: r.score || undefined,
+                source: r.source || undefined,
+                date: r.date || undefined,
+                // 移除所有可能导致 JSON.stringify 失败的复杂对象或循环引用
+            };
+        });
+    }
+
     async getSingleEmbedding(text) {
         if (!text) {
             console.error('[RAGDiaryPlugin] getSingleEmbedding was called with no text.');
