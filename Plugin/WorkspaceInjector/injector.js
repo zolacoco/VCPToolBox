@@ -112,18 +112,32 @@ async function processMessages(messages, config) {
                     let targetPath = null;
                     let isDirectPath = false;
 
-                    try {
-                        const stats = await fs.stat(content);
-                        if (stats.isDirectory()) {
-                            targetPath = content;
-                            isDirectPath = true;
-                            if (debugMode) console.log(`[WorkspaceInjector DEBUG] Content '${content}' is a direct path.`);
+                    // New logic for alias/subpath combination
+                    if (content.includes('/')) {
+                        const parts = content.split('/');
+                        const alias = parts[0];
+                        const subpath = parts.slice(1).join('/');
+                        if (workspaceAliases[alias]) {
+                            targetPath = path.join(workspaceAliases[alias], subpath);
+                            if (debugMode) console.log(`[WorkspaceInjector DEBUG] Resolved alias/subpath '${content}' to '${targetPath}'`);
                         }
-                    } catch (e) { /* Not a direct path */ }
+                    }
 
-                    if (!targetPath && workspaceAliases[content]) {
-                        targetPath = workspaceAliases[content];
-                        if (debugMode) console.log(`[WorkspaceInjector DEBUG] Found alias '${content}' mapping to '${targetPath}'`);
+                    // Fallback to existing logic
+                    if (!targetPath) {
+                        try {
+                            const stats = await fs.stat(content);
+                            if (stats.isDirectory()) {
+                                targetPath = content;
+                                isDirectPath = true;
+                                if (debugMode) console.log(`[WorkspaceInjector DEBUG] Content '${content}' is a direct path.`);
+                            }
+                        } catch (e) { /* Not a direct path */ }
+
+                        if (!targetPath && workspaceAliases[content]) {
+                            targetPath = workspaceAliases[content];
+                            if (debugMode) console.log(`[WorkspaceInjector DEBUG] Found alias '${content}' mapping to '${targetPath}'`);
+                        }
                     }
 
                     let replacement = `[Error: Workspace alias or path '${content}' is invalid or not found.]`;
