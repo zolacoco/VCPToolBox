@@ -1,6 +1,6 @@
 # 插件：工作区动态注入 (Workspace Injector)
 
-**版本:3.1.0**
+**版本:3.6.0**
 
 ## 1. 功能简介
 
@@ -48,7 +48,7 @@ WORKSPACE_ALIASES={"w": "D:\\VCPToolBox", "docs": "C:\\Users\\YourName\\Document
 
 ## 4. 使用方法
 
-插件支持三种方式进行工作区注入：
+插件支持四种方式进行工作区注入：
 
 ### 4.1. 方式一：使用别名 (适合固定项目)
 
@@ -61,7 +61,7 @@ WORKSPACE_ALIASES={"w": "D:\\VCPToolBox", "docs": "C:\\Users\\YourName\\Document
 
 插件会自动将 `w` 替换为 `D:\VCPToolBox` 文件夹的完整目录树。
 
-要了解如何限制深度，请参考 **4.3. 方式三**。
+要了解如何限制深度，请参考 **4.4. 方式四**。
 
 ### 4.2. 方式二：使用直接路径 (适合临时任务)
 
@@ -78,9 +78,24 @@ WORKSPACE_ALIASES={"w": "D:\\VCPToolBox", "docs": "C:\\Users\\YourName\\Document
 ```
 插件会自动识别这是一个直接路径，并动态抓取其目录结构进行注入。
 
-要了解如何限制深度，请参考 **4.3. 方式三**。
+要了解如何限制深度，请参考 **4.4. 方式四**。
 
-### 4.3. 方式三：限制目录深度 (新功能)
+### 4.3. 方式三：使用别名/子目录组合 (新功能)
+
+这是最灵活的用法。您可以将一个配置好的别名作为根目录，然后在其后附加任意层级的子目录。
+
+**场景示例**:
+假设您在 `config.env` 中已配置别名 `"w": "D:\\VCPToolBox"`。现在您想注入 `Agent` 子目录。
+
+您可以这样写入：
+```
+{{Workspace::w/Agent}}
+```
+插件会自动解析为 `D:\VCPToolBox\Agent` 目录。支持多层子目录，例如 `{{Workspace::w/Plugin/WorkspaceInjector}}` 也是完全有效的。
+
+要了解如何限制深度，请参考 **4.4. 方式四**。
+
+### 4.4. 方式四：限制目录深度
 
 为了防止大型项目的文件树过长导致Token爆炸，您可以在占位符的末尾添加 `::深度` 来限制目录的递归层数。
 
@@ -101,6 +116,12 @@ WORKSPACE_ALIASES={"w": "D:\\VCPToolBox", "docs": "C:\\Users\\YourName\\Document
 {{Workspace::D:\software\VCPToolBox\Plugin::1}}
 ```
 这将只显示 `Plugin` 文件夹下有哪些插件目录，但不会显示每个插件目录内部的文件。
+
+**示例3：使用别名/子目录组合并限制深度**
+```
+{{Workspace::w/Agent::1}}
+```
+这将只显示 `D:\VCPToolBox\Agent` 目录下的文件和文件夹。
 
 ## 5. 忽略文件 (`.workspaceignore`)
 
